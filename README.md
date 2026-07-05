@@ -1,55 +1,60 @@
 # Clash of the Sticks
 
-Baston de bonshommes bâtons en 2D, **4 joueurs max, entre copains**, jouable
-dans le navigateur **sans aucun serveur de jeu** : tout tourne en pair-à-pair
-via WebRTC, sur le même principe que [Blobule](https://github.com/flamme-demon/blobule).
+🇫🇷 [Version française](README.fr.md)
 
-## Comment ça marche
+A 2D stick-figure brawler for **up to 4 friends**, playable in the browser
+with **no game server at all**: everything runs peer-to-peer over WebRTC,
+following the same recipe as [Blobule](https://github.com/flamme-demon/blobule).
 
-- **L'hôte est le serveur.** Le joueur qui crée la partie fait tourner toute
-  la simulation dans son navigateur.
-- **Invitation par lien.** L'hôte partage un lien (ou un code) ; la baston
-  démarre dès que le deuxième joueur arrive. Pas de bots.
-- Le serveur public [PeerJS](https://peerjs.com) ne sert qu'à la mise en
-  relation initiale (signaling) — aucune donnée de jeu n'y transite.
+## How it works
 
-## Règles
+- **The host is the server.** The player who creates the game runs the whole
+  simulation in their browser.
+- **Invite by link.** The host shares a link (or a code); the brawl starts as
+  soon as the second player joins. No bots.
+- The public [PeerJS](https://peerjs.com) server is only used for the initial
+  WebRTC handshake (signaling) — no game data ever goes through it.
 
-Arène générée aléatoirement à chaque manche. Dernier debout gagne la manche
-(+1 au tableau des scores). On meurt en tombant dans les trous ou à 0 PV —
-et plus on est amoché, plus les coups de bâton nous projettent loin.
-La souris vise : le bâton frappe dans sa direction, et un coup ajusté sur
-la tête fait des dégâts critiques.
+## Rules
 
-## Physique
+A random arena is generated every round. Last one standing wins the round
+(+1 on the scoreboard). You die by falling into the gaps or at 0 HP — and
+the more beat-up you are, the further hits send you flying.
+The mouse aims: your stick strikes in its direction, and a well-aimed blow
+to the head deals critical damage. Throw your stick like a spinning
+propeller, fight with fists and feet when unarmed, and walk over a stick
+on the ground to pick it up. The dead drop their weapon.
 
-Les personnages sont de vrais ragdolls articulés simulés par
-[Planck.js](https://piqnt.com/planck.js) (portage JavaScript de Box2D,
-embarqué dans `js/vendor/`, aucun CDN) : capsule de torse tenue debout par
-un ressort angulaire, tête, bras et jambes pendus par des joints motorisés.
-Un coup reçu coupe brièvement l'équilibre (on chancelle), et à la mort tous
-les moteurs lâchent : le corps s'effondre et le cadavre reste dans l'arène
-jusqu'à la fin de la manche.
+## Physics
 
-## Jouer en local
+Characters are real articulated ragdolls simulated by
+[Planck.js](https://piqnt.com/planck.js) (a JavaScript port of Box2D,
+bundled in `js/vendor/`, no CDN): a torso capsule held upright by an
+angular spring, plus a head, arms and legs hanging from motorized joints.
+Getting hit briefly cuts your balance (you stagger), and on death every
+motor lets go: the body crumples and the corpse stays in the arena until
+the next round.
+
+## Play locally
 
 ```bash
 python3 -m http.server 8080
-# puis http://localhost:8080
+# then http://localhost:8080
 ```
 
-Pour inviter des copains sans hébergement ni ouverture de port, un tunnel
-suffit (la partie elle-même passe en WebRTC direct, navigateur à navigateur) :
+To invite friends without any hosting or port forwarding, a tunnel is
+enough (the game itself runs over direct browser-to-browser WebRTC):
 
 ```bash
 cloudflared tunnel --url http://localhost:8080
 ```
 
-## Contrôles
+## Controls
 
-| Entrée                  | Action                       |
-|-------------------------|------------------------------|
-| ← → ou Q D              | Se déplacer                  |
-| ↑, Z ou Espace          | Sauter (double saut)         |
-| Souris                  | Viser (la tête = critique !) |
-| E ou clic               | Coup de bâton                |
+| Input                   | Action                        |
+|-------------------------|-------------------------------|
+| ← → or Q D              | Move                          |
+| ↑, Z or Space           | Jump (double jump)            |
+| Mouse                   | Aim (the head = critical!)    |
+| E or click              | Strike                        |
+| F or right click        | Throw your stick              |
