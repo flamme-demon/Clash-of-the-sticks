@@ -61,6 +61,7 @@
         facing: 1, onGround: false, jumps: 0, coyote: 0,
         aim: 0,                   // angle de visée (souris), radians, 0 = droite
         hp: C.HP, dead: false, score: 0,
+        sh: C.SHIELD, shT: 9999,  // bouclier + temps depuis le dernier dégât
         atkT: -1,                 // ms depuis le début du coup, -1 = inactif
         cd: 0,                    // recharge de l'attaque
         ht: 0,                    // flash "touché"
@@ -105,6 +106,7 @@
       p.ragdoll = this._buildRagdoll(s.x, s.y);
       p.x = s.x; p.y = s.y;
       p.hp = C.HP; p.dead = false;
+      p.sh = C.SHIELD; p.shT = 9999;
       p.atkT = -1; p.cd = 0; p.ht = 0; p.htCrit = false;
       p.stagger = 0; p.phase = 0; p.weapon = true;
       p.jumps = 0; p.onGround = true;
@@ -185,6 +187,14 @@
       p.ragdoll = null;
     }
 
+    // le bouclier absorbe d'abord, le reste entame les PV
+    _damage(e, dmg) {
+      e.shT = 0;
+      const ab = Math.min(e.sh, dmg);
+      e.sh -= ab;
+      e.hp -= dmg - ab;
+    }
+
     _die(p) {
       p.dead = true;
       // on lâche son bâton en mourant
@@ -253,7 +263,7 @@
             if (e.dead || !e.ragdoll) continue;
             if (e.id === w.thrower && w.t < 350) continue; // pas le lanceur au départ
             if (Math.hypot(wx - e.x, wy - (e.y - C.PLAYER.H * 0.5)) > 40) continue;
-            e.hp -= C.THROW_DMG;
+            this._damage(e, C.THROW_DMG);
             e.ht = C.HIT_FLASH_MS * 1.8;
             e.htCrit = false;
             e.stagger = 350;
@@ -299,8 +309,9 @@
         this.plats.push({ x, y: gy, w, h: 52, solid: true });
         x += w + rand(110, 180);
       }
-      // plateformes flottantes (traversables par en dessous)
-      const rows = [gy - 230, gy - 440, gy - 640];
+      // plateformes flottantes (traversables par en dessous), espacées pour
+      // être atteignables d'un saut simple ou double depuis la précédente
+      const rows = [gy - 170, gy - 330, gy - 490];
       for (const ry of rows) {
         const n = 1 + Math.floor(Math.random() * 2);
         for (let i = 0; i < n; i++) {
@@ -416,6 +427,32 @@
       p.stagger = Math.max(0, p.stagger - dtMs);
       p.onGround = this._grounded(p, vyPx);
 
+      // régénération du bouclier après un répit sans dégât
+      p.shT += dtMs;
+      if (p.shT > C.SHIELD_DELAY_MS && p.sh < C.SHIELD) {
+        p.sh = Math.min(C.SHIELD, p.sh + C.SHIELD_REGEN * dt);
+      }
+
+      // collé à une paroi (chewing-gum) : en poussant vers un mur en l'air,
+      // on glisse lentement et on peut ressauter pour remonter
+      const dirWall = (inp.right ? 1 : 0) - (inp.left ? 1 : 0);
+      let onWall = false;
+      if (!p.onGround && dirWall !== 0 && p.stagger <= 0) {
+        const t = torso.getPosition();
+        const wx = t.x * S, wyC = t.y * S;
+        // trois hauteurs (tête, torse, pieds) : les flancs des blocs sont
+        // bas, il faut pouvoir agripper le rebord en tombant devant
+        for (const dy of [-24, 0, 18]) {
+          this.pw.rayCast(V(wx, wyC + dy), V(wx + dirWall * 24, wyC + dy), (fixture) => {
+            const ud = fixture.getUserData();
+            if (!ud || !ud.world || ud.oneway) return -1; // parois solides seulement
+            onWall = true;
+            return 0;
+          });
+          if (onWall) break;
+        }
+      }
+
       // vitesse horizontale pilotée (accélération / friction) tant qu'on
       // n'est pas sonné ; la projection d'un coup reste donc physique
       let vx = vxPx, vy = vyPx;
@@ -430,12 +467,15 @@
           vx = Math.abs(vx) <= f ? 0 : vx - Math.sign(vx) * f;
         }
       }
-      // saut (double saut autorisé) + tolérance "coyote"
+      // glissade lente le long de la paroi
+      if (onWall && vy > C.WALL_SLIDE_VY) vy = C.WALL_SLIDE_VY;
+
+      // saut (double saut autorisé) + tolérance "coyote" + saut mural
       p.coyote = p.onGround ? C.COYOTE_MS : Math.max(0, p.coyote - dtMs);
       if (p.onGround && vyPx >= 0) p.jumps = 0;
       if (inp.jump) {
         inp.jump = false;
-        if (p.onGround || p.coyote > 0) {
+        if (p.onGround || p.coyote > 0 || onWall) {
           vy = -C.JUMP; p.jumps = 1; p.coyote = 0;
         } else if (p.jumps < 2) {
           vy = -C.DOUBLE_JUMP; p.jumps = 2;
@@ -558,7 +598,7 @@
         }
         if (!dmg) continue;
         p.hitIds.add(e.id);
-        e.hp -= dmg;
+        this._damage(e, dmg);
         e.ht = C.HIT_FLASH_MS * (crit ? 1.8 : 1);
         e.htCrit = crit;
         e.stagger = 320;
@@ -614,7 +654,8 @@
         t: 'state',
         players: [...this.players.values()].map((p) => ({
           id: p.id, n: p.name, c: p.color, f: p.facing,
-          hp: p.hp, d: p.dead ? 1 : 0, s: p.score, w: p.weapon ? 1 : 0,
+          hp: p.hp, sh: Math.round(p.sh),
+          d: p.dead ? 1 : 0, s: p.score, w: p.weapon ? 1 : 0,
           ht: p.ht > 0 ? (p.htCrit ? 2 : 1) : 0,
           b: this.viewPlayer(p),
         })),

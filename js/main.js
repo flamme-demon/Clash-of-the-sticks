@@ -234,7 +234,8 @@
       view = {
         players: [...world.players.values()].map((p) => ({
           id: p.id, n: p.name, c: p.color, f: p.facing,
-          hp: p.hp, d: p.dead ? 1 : 0, s: p.score, w: p.weapon ? 1 : 0,
+          hp: p.hp, sh: p.sh,
+          d: p.dead ? 1 : 0, s: p.score, w: p.weapon ? 1 : 0,
           ht: p.ht > 0 ? (p.htCrit ? 2 : 1) : 0,
           b: world.viewPlayer(p),
         })),

@@ -24,6 +24,9 @@ The mouse aims: your stick strikes in its direction, and a well-aimed blow
 to the head deals critical damage. Throw your stick like a spinning
 propeller, fight with fists and feet when unarmed, and walk over a stick
 on the ground to pick it up. The dead drop their weapon.
+Everyone has a shield gauge that absorbs damage before HP and regenerates
+after a short respite, and you can cling to walls and jump off them to
+climb back up.
 
 ## Physics
 

@@ -27,6 +27,10 @@
     FIST_RANGE_MUL: 0.62,         // portée réduite sans arme
     THROW_SPEED: 950,             // vitesse du bâton lancé (px/s)
     THROW_DMG: 24,                // dégâts d'un bâton reçu en pleine course
+    SHIELD: 40,                   // jauge de bouclier (absorbe avant les PV)
+    SHIELD_REGEN: 6,              // régénération du bouclier (points/s)
+    SHIELD_DELAY_MS: 2500,        // délai sans dégât avant régénération
+    WALL_SLIDE_VY: 130,           // glissade lente collé à une paroi (px/s)
     KNOCK: 470,                   // projection, dans la direction de visée
                                   // (augmente avec les dégâts subis, façon Smash)
     HIT_FLASH_MS: 140,

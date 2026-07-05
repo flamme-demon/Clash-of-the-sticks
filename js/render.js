@@ -131,6 +131,11 @@
         const ratio = Math.max(0, p.hp) / C.HP;
         ctx.fillStyle = ratio > 0.5 ? '#6ee7a0' : ratio > 0.25 ? '#ffd166' : '#ff5c5c';
         ctx.fillRect(bx2, by, bw * ratio, 5);
+        // jauge de bouclier (cyan) sous les PV
+        ctx.fillStyle = 'rgba(0,0,0,0.45)';
+        ctx.fillRect(bx2 - 1, by + 7, bw + 2, 5);
+        ctx.fillStyle = '#5ce1e6';
+        ctx.fillRect(bx2, by + 8, bw * Math.max(0, p.sh || 0) / C.SHIELD, 3);
         ctx.fillStyle = isMe ? '#ffffff' : 'rgba(255,255,255,0.75)';
         ctx.font = (isMe ? '700 ' : '') + '15px system-ui, sans-serif';
         ctx.textAlign = 'center';

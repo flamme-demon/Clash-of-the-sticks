@@ -24,6 +24,9 @@ La souris vise : le bâton frappe dans sa direction, et un coup ajusté sur
 la tête fait des dégâts critiques. Lancez votre bâton comme une hélice,
 battez-vous aux poings et aux pieds une fois désarmé, et marchez sur un
 bâton au sol pour le ramasser. Les morts lâchent leur arme.
+Chacun a une jauge de bouclier qui absorbe les dégâts avant les PV et se
+régénère après un répit, et on peut se coller aux parois pour sauter et
+remonter (saut mural).
 
 ## Physique
 
