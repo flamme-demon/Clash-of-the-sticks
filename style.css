@@ -1,0 +1,156 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  font-family: system-ui, -apple-system, sans-serif;
+  background: #111318;
+  color: #e8eaf0;
+}
+
+#game {
+  position: fixed; inset: 0;
+  width: 100%; height: 100%;
+  display: block;
+  cursor: crosshair;   /* la souris est le viseur du bâton */
+}
+
+.hidden { display: none !important; }
+
+/* ---- overlays ---- */
+.overlay {
+  position: fixed; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(10, 12, 18, 0.75);
+  backdrop-filter: blur(6px);
+  z-index: 10;
+}
+
+.panel {
+  width: min(430px, 92vw);
+  max-height: 92vh;
+  overflow-y: auto;
+  background: #1a1e28;
+  border: 1px solid #2c3242;
+  border-radius: 16px;
+  padding: 28px;
+  text-align: center;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+
+h1 { font-size: 2.3rem; letter-spacing: -1px; }
+h1 span { color: #ffb454; }
+.tagline { color: #9aa3b5; margin: 6px 0 20px; font-size: 0.9rem; }
+
+.section {
+  border-top: 1px solid #2c3242;
+  margin-top: 18px; padding-top: 16px;
+  text-align: left;
+}
+.section h2 { font-size: 1rem; margin-bottom: 10px; }
+
+input[type="text"] {
+  width: 100%;
+  padding: 10px 12px;
+  margin: 6px 0;
+  border-radius: 10px;
+  border: 1px solid #2c3242;
+  background: #12151d;
+  color: #e8eaf0;
+  font-size: 0.95rem;
+  outline: none;
+}
+input[type="text"]:focus { border-color: #ffb454; }
+
+button {
+  padding: 10px 18px;
+  margin-top: 8px;
+  border: 1px solid #2c3242;
+  border-radius: 10px;
+  background: #232838;
+  color: #e8eaf0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+button:hover { background: #2b3145; }
+button.primary {
+  width: 100%;
+  background: #c07b2a;
+  border-color: #c07b2a;
+  color: #14161c;
+}
+button.primary:hover { background: #d98f38; }
+
+.hint { font-size: 0.78rem; color: #8b93a7; margin: 8px 0; }
+.msg { min-height: 1.2em; margin-top: 14px; color: #ffb454; font-size: 0.85rem; }
+.controls { margin-top: 16px; font-size: 0.78rem; color: #8b93a7; }
+kbd {
+  background: #232838; border: 1px solid #384054; border-radius: 4px;
+  padding: 1px 5px; font-size: 0.75rem;
+}
+
+/* ---- HUD ---- */
+#hud > * { position: fixed; z-index: 5; }
+
+#scoreboard {
+  top: 14px; right: 14px;
+  width: 200px;
+  background: rgba(20, 24, 34, 0.85);
+  border: 1px solid #2c3242;
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 0.85rem;
+}
+#scoreboard h3 { font-size: 0.9rem; margin-bottom: 6px; text-align: center; }
+.lb-row {
+  display: flex; align-items: center; gap: 7px;
+  padding: 2px 0; color: #c3c9d6;
+}
+.lb-row span { margin-left: auto; color: #8b93a7; font-weight: 700; }
+.lb-row.me { color: #ffffff; font-weight: 700; }
+.lb-row i {
+  width: 10px; height: 10px; border-radius: 3px; flex: none;
+}
+.lb-free { margin-top: 6px; font-size: 0.75rem; color: #8b93a7; text-align: center; }
+
+#inviteBar {
+  top: 14px; left: 14px;
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(20, 24, 34, 0.85);
+  border: 1px solid #2c3242;
+  border-radius: 12px;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+}
+#inviteBar input {
+  width: 230px; margin: 0; padding: 6px 8px; font-size: 0.78rem;
+  border-radius: 8px; border: 1px solid #2c3242;
+  background: #12151d; color: #e8eaf0; outline: none;
+}
+#inviteBar button { margin: 0; padding: 6px 12px; font-size: 0.8rem; }
+
+/* panneau de réglage physique (touche T) */
+#tunePanel {
+  position: fixed; left: 14px; top: 70px; z-index: 8;
+  width: 240px;
+  background: rgba(20, 24, 34, 0.92);
+  border: 1px solid #2c3242;
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 0.78rem;
+}
+#tunePanel h3 { font-size: 0.85rem; margin-bottom: 8px; }
+#tunePanel h3 small { color: #8b93a7; font-weight: 400; }
+#tunePanel label { display: block; margin: 6px 0; color: #c3c9d6; }
+#tunePanel output { float: right; color: #ffb454; }
+#tunePanel input[type="range"] { width: 100%; }
+#tunePanel button { width: 100%; margin-top: 8px; padding: 6px; font-size: 0.78rem; }
+
+#quitBtn {
+  bottom: 14px; right: 14px;
+  margin: 0;
+  width: 38px; height: 38px;
+  border-radius: 50%;
+  padding: 0;
+}

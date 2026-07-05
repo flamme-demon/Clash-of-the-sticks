@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Clash of the Sticks — baston P2P entre copains, sans serveur</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><g stroke='%23ffb454' stroke-width='9' stroke-linecap='round' fill='none'><circle cx='50' cy='22' r='12' fill='%23ffb454'/><path d='M50 34 L50 62 M50 62 L34 90 M50 62 L66 90 M50 42 L30 56 M50 42 L72 30'/><path d='M72 30 L88 10' stroke='%23b98a4e'/></g></svg>">
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <!-- Menu principal -->
+  <div id="menu" class="overlay">
+    <div class="panel">
+      <h1>Clash of the <span>Sticks</span></h1>
+      <p class="tagline">Baston de bonshommes bâtons — 4 joueurs, en pair-à-pair, sans serveur.</p>
+
+      <input id="nameInput" type="text" maxlength="16" placeholder="Votre pseudo" autocomplete="off">
+
+      <div class="section">
+        <h2>Créer une partie</h2>
+        <p class="hint">Vous recevez un lien à partager à vos copains (4 joueurs max).
+          La baston démarre dès que le deuxième arrive : dernier debout gagne la manche !</p>
+        <button id="hostBtn" class="primary">Créer</button>
+      </div>
+
+      <div class="section">
+        <h2>Rejoindre une partie</h2>
+        <input id="joinInput" type="text" placeholder="Lien ou code d'invitation" autocomplete="off">
+        <button id="joinBtn">Rejoindre</button>
+      </div>
+
+      <p id="menuMsg" class="msg"></p>
+      <p class="controls">
+        <kbd>←</kbd><kbd>→</kbd> ou <kbd>Q</kbd><kbd>D</kbd> bouger ·
+        <kbd>↑</kbd>/<kbd>Z</kbd>/<kbd>Espace</kbd> sauter (double saut) ·
+        souris : viser · <kbd>E</kbd> ou clic : frapper ·
+        <kbd>F</kbd> ou clic droit : lancer le bâton<br>
+        Sans arme : poings et pieds. Marchez sur un bâton pour le ramasser.
+        Visez la tête : coup critique !
+      </p>
+    </div>
+  </div>
+
+  <!-- HUD en jeu -->
+  <div id="hud" class="hidden">
+    <div id="scoreboard"></div>
+    <div id="inviteBar" class="hidden">
+      <span>Inviter :</span>
+      <input id="inviteLink" type="text" readonly>
+      <button id="copyBtn">Copier</button>
+    </div>
+    <button id="quitBtn" title="Quitter la partie">✕</button>
+  </div>
+
+  <!-- PeerJS (signaling WebRTC). Sans réseau, impossible d'inviter mais la page charge. -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <!-- Planck.js (Box2D en JS) : le moteur physique des ragdolls, en local -->
+  <script src="js/vendor/planck.min.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/sim.js"></script>
+  <script src="js/net.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
