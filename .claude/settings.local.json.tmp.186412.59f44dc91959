@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node *)",
+      "Bash(command -v chromium chromium-browser google-chrome-stable google-chrome firefox 2>/dev/null)",
+      "Bash(curl -sL -o /home/flamme/dev/Jeuxdubaton/js/vendor/planck.min.js https://unpkg.com/planck@1.4.2/dist/planck.min.js)",
+      "Bash(python3 -)",
+      "Bash(chromium --headless=new --disable-gpu --window-size=1400,860 --virtual-time-budget=2400 --screenshot=/tmp/claude-1000/-home-flamme-dev-Jeuxdubaton/a3a99e77-d7dc-4390-b1ac-80e32c96da96/scratchpad/shot-ragdoll.png http://localhost:8471/test-host.html)",
+      "Bash(command -v yt-dlp ffmpeg)",
+      "Bash(yt-dlp -f \"bv*[height<=720]\" --download-sections \"*85-105\" -o clip.mp4 \"https://www.youtube.com/watch?v=Xo7zH9kCZo8\")",
+      "Bash(ffmpeg -y -i clip.mp4 -vf \"fps=1/2,scale=960:-1\" frame_%02d.png)",
+      "Bash(sed -i 's|<title>Jeux du bâton — baston P2P entre copains, sans serveur</title>|<title>Le Choc des Bâtons — baston P2P entre copains, sans serveur</title>|; s|<h1>Jeux du <span>bâton</span></h1>|<h1>Le Choc des <span>Bâtons</span></h1>|' index.html)",
+      "Bash(sed -i '1s|# Jeux du bâton|# Le Choc des Bâtons|' README.md)",
+      "Bash(sed -i 's|<title>Le Choc des Bâtons — baston P2P entre copains, sans serveur</title>|<title>Clash of the Sticks — baston P2P entre copains, sans serveur</title>|; s|<h1>Le Choc des <span>Bâtons</span></h1>|<h1>Clash of the <span>Sticks</span></h1>|' index.html)",
+      "Bash(sed -i '1s|# Le Choc des Bâtons|# Clash of the Sticks|' README.md)",
+      "Bash(git init *)",
+      "Bash(git add *)",
+      "Bash(git commit -q -m 'Clash of the Sticks — baston P2P entre copains, sans serveur *)",
+      "Bash(git remote *)",
+      "Bash(git push *)",
+      "Bash(git commit -q -m 'README bilingue anglais / français *)",
+      "Bash(gh api *)",
+      "Bash(git commit -q -m 'Bouclier à jauge, saut mural et plateformes accessibles *)",
+      "Bash(git commit -q -m 'Plateformes pleines + bouclier actif au clic droit *)"
+    ]
+  }
+}

@@ -24,8 +24,9 @@ The mouse aims: your stick strikes in its direction, and a well-aimed blow
 to the head deals critical damage. Throw your stick like a spinning
 propeller, fight with fists and feet when unarmed, and walk over a stick
 on the ground to pick it up. The dead drop their weapon.
-Everyone has a shield gauge that absorbs damage before HP and regenerates
-after a short respite, and you can cling to walls and jump off them to
+Hold right click to raise a shield: its gauge absorbs damage (and wears
+down while raised) and regenerates after a short respite. Platforms are
+solid — cling to their sides and wall-jump to climb up. Also, and you can cling to walls and jump off them to
 climb back up.
 
 ## Physics
@@ -60,4 +61,5 @@ cloudflared tunnel --url http://localhost:8080
 | ↑, Z or Space           | Jump (double jump)            |
 | Mouse                   | Aim (the head = critical!)    |
 | E or click              | Strike                        |
-| F or right click        | Throw your stick              |
+| F                       | Throw your stick              |
+| Right click (hold)      | Raise your shield             |

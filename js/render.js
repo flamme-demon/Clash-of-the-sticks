@@ -111,6 +111,16 @@
           line(a1x, a1y, a1x + Math.cos(ba) * 44, a1y + Math.sin(ba) * 44);
         }
       };
+      // bulle de bouclier (clic droit maintenu)
+      if (p.bl && !p.d) {
+        ctx.beginPath();
+        ctx.arc(tx, ty - 5, 46, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(92,225,230,0.12)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(92,225,230,0.7)';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }
       // halo quand on vient d'être touché (doré si coup à la tête)
       if (p.ht) {
         ctx.strokeStyle = p.ht === 2 ? 'rgba(255,209,102,0.95)' : 'rgba(255,255,255,0.9)';

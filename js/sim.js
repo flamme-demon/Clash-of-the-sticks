@@ -62,6 +62,7 @@
         aim: 0,                   // angle de visée (souris), radians, 0 = droite
         hp: C.HP, dead: false, score: 0,
         sh: C.SHIELD, shT: 9999,  // bouclier + temps depuis le dernier dégât
+        blocking: false,          // bouclier levé (clic droit maintenu)
         atkT: -1,                 // ms depuis le début du coup, -1 = inactif
         cd: 0,                    // recharge de l'attaque
         ht: 0,                    // flash "touché"
@@ -72,7 +73,10 @@
         weapon: true,             // tient son bâton (sinon poings et pieds)
         combo: 0,                 // alterne poing / pied à mains nues
         ragdoll: null,
-        input: { left: false, right: false, jump: false, attack: false, throw: false },
+        input: {
+          left: false, right: false, jump: false,
+          attack: false, throw: false, block: false,
+        },
       };
       this.players.set(id, p);
       this.spawn(p);
@@ -92,6 +96,7 @@
       if (!p) return;
       p.input.left = !!msg.l;
       p.input.right = !!msg.r;
+      p.input.block = !!msg.bl;
       if (typeof msg.m === 'number' && isFinite(msg.m)) p.aim = msg.m;
       // sauts et coups sont des impulsions : on les accumule jusqu'au
       // prochain tick pour ne jamais en perdre entre deux envois réseau
@@ -187,12 +192,17 @@
       p.ragdoll = null;
     }
 
-    // le bouclier absorbe d'abord, le reste entame les PV
+    // bouclier levé : la jauge encaisse (le surplus passe aux PV) ;
+    // sinon les dégâts vont directement aux PV
     _damage(e, dmg) {
       e.shT = 0;
-      const ab = Math.min(e.sh, dmg);
-      e.sh -= ab;
-      e.hp -= dmg - ab;
+      if (e.blocking && e.sh > 0) {
+        const ab = Math.min(e.sh, dmg);
+        e.sh -= ab;
+        e.hp -= dmg - ab;
+      } else {
+        e.hp -= dmg;
+      }
     }
 
     _die(p) {
@@ -267,7 +277,8 @@
             e.ht = C.HIT_FLASH_MS * 1.8;
             e.htCrit = false;
             e.stagger = 350;
-            const scale = 0.7 + ((C.HP - Math.max(0, e.hp)) / C.HP) * 1.4;
+            const scale = (0.7 + ((C.HP - Math.max(0, e.hp)) / C.HP) * 1.4) *
+          (e.blocking ? 0.35 : 1);   // bien campé derrière son bouclier
             const nx = v.x / (sp / S), ny = v.y / (sp / S);
             e.ragdoll.torso.setLinearVelocity(new pl.Vec2(
               nx * C.KNOCK * scale / S,
@@ -309,8 +320,8 @@
         this.plats.push({ x, y: gy, w, h: 52, solid: true });
         x += w + rand(110, 180);
       }
-      // plateformes flottantes (traversables par en dessous), espacées pour
-      // être atteignables d'un saut simple ou double depuis la précédente
+      // plateformes flottantes pleines (comme le sol) : on ne passe pas à
+      // travers, il faut s'accrocher au flanc et sauter pour remonter
       const rows = [gy - 170, gy - 330, gy - 490];
       for (const ry of rows) {
         const n = 1 + Math.floor(Math.random() * 2);
@@ -320,7 +331,7 @@
           const py = ry + rand(-40, 40);
           if (this.plats.some((q) => Math.abs(q.y - py) < 70 &&
               px < q.x + q.w + 60 && px + w > q.x - 60)) continue;
-          this.plats.push({ x: px, y: py, w, h: 24, solid: false });
+          this.plats.push({ x: px, y: py, w, h: 30, solid: true });
         }
       }
       // corps statiques Planck
@@ -427,9 +438,14 @@
       p.stagger = Math.max(0, p.stagger - dtMs);
       p.onGround = this._grounded(p, vyPx);
 
-      // régénération du bouclier après un répit sans dégât
+      // bouclier levé (clic droit) : il s'use tant qu'il est tenu ; sinon
+      // il se régénère après un répit sans dégât
+      p.blocking = !!inp.block && p.sh > 0;
       p.shT += dtMs;
-      if (p.shT > C.SHIELD_DELAY_MS && p.sh < C.SHIELD) {
+      if (p.blocking) {
+        p.sh = Math.max(0, p.sh - C.SHIELD_DRAIN * dt);
+        p.shT = 0;
+      } else if (p.shT > C.SHIELD_DELAY_MS && p.sh < C.SHIELD) {
         p.sh = Math.min(C.SHIELD, p.sh + C.SHIELD_REGEN * dt);
       }
 
@@ -604,7 +620,8 @@
         e.stagger = 320;
         // projection dans la direction du coup, amplifiée par les dégâts
         // subis (façon Smash), avec une rotation pour l'effet chiffon
-        const scale = 0.7 + ((C.HP - Math.max(0, e.hp)) / C.HP) * 1.4;
+        const scale = (0.7 + ((C.HP - Math.max(0, e.hp)) / C.HP) * 1.4) *
+          (e.blocking ? 0.35 : 1);   // bien campé derrière son bouclier
         const tb = e.ragdoll.torso;
         tb.setLinearVelocity(new pl.Vec2(
           dx * C.KNOCK * scale / S,
@@ -654,7 +671,7 @@
         t: 'state',
         players: [...this.players.values()].map((p) => ({
           id: p.id, n: p.name, c: p.color, f: p.facing,
-          hp: p.hp, sh: Math.round(p.sh),
+          hp: p.hp, sh: Math.round(p.sh), bl: p.blocking ? 1 : 0,
           d: p.dead ? 1 : 0, s: p.score, w: p.weapon ? 1 : 0,
           ht: p.ht > 0 ? (p.htCrit ? 2 : 1) : 0,
           b: this.viewPlayer(p),

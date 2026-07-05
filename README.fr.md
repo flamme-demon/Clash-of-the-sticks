@@ -24,8 +24,9 @@ La souris vise : le bâton frappe dans sa direction, et un coup ajusté sur
 la tête fait des dégâts critiques. Lancez votre bâton comme une hélice,
 battez-vous aux poings et aux pieds une fois désarmé, et marchez sur un
 bâton au sol pour le ramasser. Les morts lâchent leur arme.
-Chacun a une jauge de bouclier qui absorbe les dégâts avant les PV et se
-régénère après un répit, et on peut se coller aux parois pour sauter et
+Maintenez le clic droit pour lever un bouclier : sa jauge encaisse les
+dégâts (et s'use tant qu'il est levé) puis se régénère après un répit.
+Les plateformes sont pleines : collez-vous à leur flanc et sautez pour
 remonter (saut mural).
 
 ## Physique
@@ -60,4 +61,5 @@ cloudflared tunnel --url http://localhost:8080
 | ↑, Z ou Espace          | Sauter (double saut)         |
 | Souris                  | Viser (la tête = critique !) |
 | E ou clic               | Frapper                      |
-| F ou clic droit         | Lancer le bâton              |
+| F                       | Lancer le bâton              |
+| Clic droit (maintenu)   | Lever le bouclier            |

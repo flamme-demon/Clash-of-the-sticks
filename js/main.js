@@ -29,6 +29,7 @@
   // donne la direction de visée (où le bâton frappe)
   const input = {
     left: false, right: false, jump: false, attack: false, throw: false,
+    block: false,
     mouseX: window.innerWidth / 2, mouseY: window.innerHeight / 2,
   };
 
@@ -68,11 +69,16 @@
   });
   canvas.addEventListener('mousedown', (e) => {
     if (!running) return;
-    if (e.button === 2) input.throw = true;   // clic droit : lancer
+    if (e.button === 2) input.block = true;   // clic droit maintenu : bouclier
     else input.attack = true;
   });
+  window.addEventListener('mouseup', (e) => {
+    if (e.button === 2) input.block = false;
+  });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-  window.addEventListener('blur', () => { input.left = false; input.right = false; });
+  window.addEventListener('blur', () => {
+    input.left = false; input.right = false; input.block = false;
+  });
 
   // ---- menu ----
   const params = new URLSearchParams(location.search);
@@ -234,7 +240,7 @@
       view = {
         players: [...world.players.values()].map((p) => ({
           id: p.id, n: p.name, c: p.color, f: p.facing,
-          hp: p.hp, sh: p.sh,
+          hp: p.hp, sh: p.sh, bl: p.blocking ? 1 : 0,
           d: p.dead ? 1 : 0, s: p.score, w: p.weapon ? 1 : 0,
           ht: p.ht > 0 ? (p.htCrit ? 2 : 1) : 0,
           b: world.viewPlayer(p),
@@ -279,7 +285,7 @@
   function applyLocalInput() {
     world.setInput(myId, {
       l: input.left, r: input.right, j: input.jump, a: input.attack,
-      tr: input.throw, m: computeAim(),
+      tr: input.throw, bl: input.block, m: computeAim(),
     });
     input.jump = false; input.attack = false; input.throw = false;
   }
@@ -288,7 +294,8 @@
     if (!clientNet) return;
     clientNet.sendInput({
       l: input.left, r: input.right, j: input.jump, a: input.attack,
-      tr: input.throw, m: Math.round(computeAim() * 100) / 100,
+      tr: input.throw, bl: input.block,
+      m: Math.round(computeAim() * 100) / 100,
     });
     input.jump = false; input.attack = false; input.throw = false;
   }
