@@ -27,6 +27,32 @@
     FIST_RANGE_MUL: 0.62,         // portée réduite sans arme
     THROW_SPEED: 950,             // vitesse du bâton lancé (px/s)
     THROW_DMG: 24,                // dégâts d'un bâton reçu en pleine course
+    // arsenal — melee: portée/dégâts du coup ; armes à feu : cadence (ms),
+    // munitions, vitesse des balles, dispersion (rad), recul (px/s)
+    WEAPONS: {
+      baton:    { nom: 'Bâton', melee: 1, dmg: 16, range: 82, throwDmg: 24 },
+      epee:     { nom: 'Épée', melee: 1, dmg: 24, range: 95, throwDmg: 30 },
+      lance:    { nom: 'Lance', melee: 1, dmg: 18, range: 150, throwDmg: 36 },
+      pistolet: { nom: 'Pistolet', dmg: 12, ammo: 10, rate: 280, speed: 1500, recul: 60 },
+      uzi:      { nom: 'Uzi', dmg: 6, ammo: 30, rate: 90, speed: 1400, spread: 0.12, recul: 40 },
+      pompe:    { nom: 'Pompe', dmg: 7, ammo: 6, rate: 700, speed: 1300, pellets: 5, spread: 0.22, recul: 420 },
+      sniper:   { nom: 'Sniper', dmg: 45, ammo: 3, rate: 1100, speed: 2600, recul: 220 },
+      // fournée Stick Fight officielle
+      revolver: { nom: 'Revolver', dmg: 22, ammo: 6, rate: 520, speed: 1900, recul: 150 },
+      ak47:     { nom: 'AK-47', dmg: 9, ammo: 25, rate: 130, speed: 1600, spread: 0.06, recul: 55 },
+      minigun:  { nom: 'Minigun', dmg: 5, ammo: 100, rate: 55, speed: 1500, spread: 0.16, recul: 110 },
+      sabre:    { nom: 'Sabre laser', melee: 1, dmg: 32, range: 105, throwDmg: 42 },
+      // explosifs : grav = gravité du projectile (px/s²), expl = rayon (px)
+      grenades: { nom: 'Lance-grenades', dmg: 34, ammo: 4, rate: 800, speed: 950, grav: 1600, expl: 95, recul: 120 },
+      rpg:      { nom: 'RPG', dmg: 55, ammo: 1, rate: 1200, speed: 1100, expl: 130, recul: 280 },
+    },
+    DROPS: ['epee', 'lance', 'pistolet', 'uzi', 'pompe', 'sniper',
+      'revolver', 'ak47', 'minigun', 'sabre', 'grenades', 'rpg'],
+    EXPL_KNOCK: 700,              // projection au centre d'une explosion (px/s)
+    EXPL_FX_MS: 320,              // durée de l'effet visuel d'explosion
+    DROP_MS: 8000,                // une arme tombe du ciel toutes les ~8 s
+    DROP_MAX: 3,                  // max d'armes libres posées en même temps
+    BULLET_LIFE_MS: 1300,
     SHIELD: 40,                   // jauge de bouclier (absorbe avant les PV)
     SHIELD_REGEN: 6,              // régénération du bouclier (points/s)
     SHIELD_DRAIN: 10,             // usure du bouclier levé (points/s)

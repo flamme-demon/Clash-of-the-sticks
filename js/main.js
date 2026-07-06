@@ -29,7 +29,7 @@
   // donne la direction de visée (où le bâton frappe)
   const input = {
     left: false, right: false, jump: false, attack: false, throw: false,
-    block: false,
+    block: false, attackHeld: false,
     mouseX: window.innerWidth / 2, mouseY: window.innerHeight / 2,
   };
 
@@ -56,13 +56,17 @@
     if (KEYS.left.includes(k)) input.left = true;
     else if (KEYS.right.includes(k)) input.right = true;
     else if (KEYS.jump.includes(k)) { e.preventDefault(); if (!e.repeat) input.jump = true; }
-    else if (KEYS.attack.includes(k)) { if (!e.repeat) input.attack = true; }
+    else if (KEYS.attack.includes(k)) {
+      if (!e.repeat) input.attack = true;
+      input.attackHeld = true;
+    }
     else if (KEYS.throw.includes(k)) { if (!e.repeat) input.throw = true; }
   });
   window.addEventListener('keyup', (e) => {
     const k = e.key.toLowerCase();
     if (KEYS.left.includes(k)) input.left = false;
     else if (KEYS.right.includes(k)) input.right = false;
+    else if (KEYS.attack.includes(k)) input.attackHeld = false;
   });
   window.addEventListener('mousemove', (e) => {
     input.mouseX = e.clientX; input.mouseY = e.clientY;
@@ -70,14 +74,16 @@
   canvas.addEventListener('mousedown', (e) => {
     if (!running) return;
     if (e.button === 2) input.block = true;   // clic droit maintenu : bouclier
-    else input.attack = true;
+    else { input.attack = true; input.attackHeld = true; }
   });
   window.addEventListener('mouseup', (e) => {
     if (e.button === 2) input.block = false;
+    else input.attackHeld = false;
   });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   window.addEventListener('blur', () => {
-    input.left = false; input.right = false; input.block = false;
+    input.left = false; input.right = false;
+    input.block = false; input.attackHeld = false;
   });
 
   // ---- menu ----
@@ -241,11 +247,14 @@
         players: [...world.players.values()].map((p) => ({
           id: p.id, n: p.name, c: p.color, f: p.facing,
           hp: p.hp, sh: p.sh, bl: p.blocking ? 1 : 0,
-          d: p.dead ? 1 : 0, s: p.score, w: p.weapon ? 1 : 0,
+          d: p.dead ? 1 : 0, s: p.score,
+          w: p.weapon || 0, mn: p.ammo, mu: p.mu > 0 ? 1 : 0,
           ht: p.ht > 0 ? (p.htCrit ? 2 : 1) : 0,
           b: world.viewPlayer(p),
         })),
         weapons: world.viewWeapons(),
+        bullets: world.viewBullets(),
+        booms: world.viewBooms(),
         plats: world.plats.map((pl) => [pl.x, pl.y, pl.w, pl.h, pl.solid ? 1 : 0]),
         round: {
           n: world.round.n, ph: world.round.phase,
@@ -285,7 +294,7 @@
   function applyLocalInput() {
     world.setInput(myId, {
       l: input.left, r: input.right, j: input.jump, a: input.attack,
-      tr: input.throw, bl: input.block, m: computeAim(),
+      ah: input.attackHeld, tr: input.throw, bl: input.block, m: computeAim(),
     });
     input.jump = false; input.attack = false; input.throw = false;
   }
@@ -294,7 +303,7 @@
     if (!clientNet) return;
     clientNet.sendInput({
       l: input.left, r: input.right, j: input.jump, a: input.attack,
-      tr: input.throw, bl: input.block,
+      ah: input.attackHeld, tr: input.throw, bl: input.block,
       m: Math.round(computeAim() * 100) / 100,
     });
     input.jump = false; input.attack = false; input.throw = false;
@@ -336,6 +345,8 @@
     return {
       players,
       weapons: snap.wp,
+      bullets: snap.bu,
+      booms: snap.bx,
       plats: snap.plats,
       round: snap.round,
       waiting: snap.players.length < 2,

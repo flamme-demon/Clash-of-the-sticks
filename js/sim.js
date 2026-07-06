@@ -21,6 +21,14 @@
   function norm(a) {
     return ((a + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
   }
+  // distance d'un point (px,py) au segment (x1,y1)-(x2,y2)
+  function segDist(x1, y1, x2, y2, px, py) {
+    const dx = x2 - x1, dy = y2 - y1;
+    const l2 = dx * dx + dy * dy;
+    let t = l2 ? ((px - x1) * dx + (py - y1) * dy) / l2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    return Math.hypot(px - (x1 + dx * t), py - (y1 + dy * t));
+  }
 
   class World {
     constructor() {
@@ -29,8 +37,11 @@
       this.platBodies = [];       // corps statiques Planck correspondants
       this.spawns = [];           // {x,y} — pieds posés sur une plateforme
       this.round = { n: 1, phase: 'play', timer: 0, winner: '' };
-      this.weapons = new Map();   // bâtons libres (lancés / lâchés) -> corps Planck
+      this.weapons = new Map();   // armes libres (lancées / lâchées / larguées)
       this._wid = 0;
+      this.bullets = [];          // balles en vol
+      this.booms = [];            // explosions en cours (effet + fenêtre rendu)
+      this.dropT = C.DROP_MS;     // compte à rebours du prochain largage
       this._usedColors = new Set();
 
       this.pw = new pl.World({ gravity: new pl.Vec2(0, C.GRAVITY / S) });
@@ -70,12 +81,14 @@
         stagger: 0,               // équilibre affaibli juste après un coup reçu
         phase: 0,                 // phase de la démarche
         hitIds: new Set(),        // déjà touchés pendant ce coup
-        weapon: true,             // tient son bâton (sinon poings et pieds)
+        weapon: 'baton',          // type d'arme tenue, null = poings et pieds
+        ammo: 0,                  // munitions restantes (armes à feu)
+        mu: 0,                    // flash de bouche (ms restants)
         combo: 0,                 // alterne poing / pied à mains nues
         ragdoll: null,
         input: {
           left: false, right: false, jump: false,
-          attack: false, throw: false, block: false,
+          attack: false, attackHeld: false, throw: false, block: false,
         },
       };
       this.players.set(id, p);
@@ -97,6 +110,7 @@
       p.input.left = !!msg.l;
       p.input.right = !!msg.r;
       p.input.block = !!msg.bl;
+      p.input.attackHeld = !!msg.ah;
       if (typeof msg.m === 'number' && isFinite(msg.m)) p.aim = msg.m;
       // sauts et coups sont des impulsions : on les accumule jusqu'au
       // prochain tick pour ne jamais en perdre entre deux envois réseau
@@ -113,7 +127,8 @@
       p.hp = C.HP; p.dead = false;
       p.sh = C.SHIELD; p.shT = 9999;
       p.atkT = -1; p.cd = 0; p.ht = 0; p.htCrit = false;
-      p.stagger = 0; p.phase = 0; p.weapon = true;
+      p.stagger = 0; p.phase = 0;
+      p.weapon = 'baton'; p.ammo = 0; p.mu = 0;
       p.jumps = 0; p.onGround = true;
     }
 
@@ -207,12 +222,12 @@
 
     _die(p) {
       p.dead = true;
-      // on lâche son bâton en mourant
+      // on lâche son arme en mourant
       if (p.weapon && p.ragdoll) {
         const v = p.ragdoll.torso.getLinearVelocity();
         this._spawnWeapon(p.x, p.y - 40, v.x * S * 0.5, v.y * S * 0.5 - 120,
-          rand(-8, 8), null);
-        p.weapon = false;
+          rand(-8, 8), null, p.weapon, p.ammo);
+        p.weapon = null;
       }
       const r = p.ragdoll;
       if (!r) return;
@@ -229,7 +244,7 @@
     }
 
     // ---------- armes libres ----------
-    _spawnWeapon(x, y, vx, vy, spin, thrower) {
+    _spawnWeapon(x, y, vx, vy, spin, thrower, type, ammo) {
       const b = this.pw.createBody({
         type: 'dynamic', position: V(x, y), angle: Math.atan2(vy, vx),
         bullet: true, angularDamping: 0.05,
@@ -246,7 +261,21 @@
       });
       b.setLinearVelocity(new pl.Vec2(vx / S, vy / S));
       b.setAngularVelocity(spin);
-      this.weapons.set(++this._wid, { body: b, thrower, t: 0 });
+      this.weapons.set(++this._wid, {
+        body: b, thrower, t: 0, type: type || 'baton',
+        ammo: ammo === undefined ? (C.WEAPONS[type || 'baton'].ammo || 0) : ammo,
+      });
+    }
+
+    // largage : une arme aléatoire tombe du ciel en cours de manche
+    _tickDrops(dtMs) {
+      if (this.players.size < 2 || this.round.phase !== 'play') return;
+      this.dropT -= dtMs;
+      if (this.dropT > 0) return;
+      this.dropT = C.DROP_MS * rand(0.7, 1.4);
+      if (this.weapons.size >= C.DROP_MAX) return;
+      const type = C.DROPS[Math.floor(Math.random() * C.DROPS.length)];
+      this._spawnWeapon(rand(120, C.WORLD.W - 120), -60, 0, 80, rand(-3, 3), null, type);
     }
 
     _tickWeapons(dtMs) {
@@ -273,7 +302,7 @@
             if (e.dead || !e.ragdoll) continue;
             if (e.id === w.thrower && w.t < 350) continue; // pas le lanceur au départ
             if (Math.hypot(wx - e.x, wy - (e.y - C.PLAYER.H * 0.5)) > 40) continue;
-            this._damage(e, C.THROW_DMG);
+            this._damage(e, (C.WEAPONS[w.type] && C.WEAPONS[w.type].throwDmg) || C.THROW_DMG);
             e.ht = C.HIT_FLASH_MS * 1.8;
             e.htCrit = false;
             e.stagger = 350;
@@ -295,13 +324,124 @@
           for (const e of this.players.values()) {
             if (e.dead || e.weapon || !e.ragdoll) continue;
             if (Math.hypot(wx - e.x, wy - (e.y - 25)) < 45) {
-              e.weapon = true;
+              e.weapon = w.type;
+              e.ammo = w.ammo;
               this.pw.destroyBody(w.body);
               this.weapons.delete(id);
               break;
             }
           }
         }
+      }
+    }
+
+    // ---------- balles ----------
+    _fire(p, W) {
+      p.cd = W.rate;
+      p.ammo--;
+      p.mu = 70;
+      const n = W.pellets || 1;
+      for (let i = 0; i < n; i++) {
+        const ang = p.aim + (W.spread ? (Math.random() - 0.5) * 2 * W.spread : 0);
+        this.bullets.push({
+          x: p.x + Math.cos(p.aim) * 28, y: p.y - 34 + Math.sin(p.aim) * 28,
+          vx: Math.cos(ang) * W.speed, vy: Math.sin(ang) * W.speed,
+          t: 0, dmg: W.dmg, o: p.id,
+          g: W.grav || 0, expl: W.expl || 0,
+        });
+      }
+      // recul
+      const tv = p.ragdoll.torso.getLinearVelocity();
+      p.ragdoll.torso.setLinearVelocity(new pl.Vec2(
+        tv.x - Math.cos(p.aim) * W.recul / S,
+        tv.y - Math.sin(p.aim) * W.recul * 0.5 / S));
+      if (p.ammo <= 0) p.weapon = null;   // à sec : on jette, poings et pieds
+    }
+
+    // souffle : dégâts et projection décroissants avec la distance, effet
+    // visuel diffusé aux invités — le tireur n'est pas épargné (classique !)
+    _explode(x, y, dmg, radius) {
+      this.booms.push({ x, y, r: radius, t: C.EXPL_FX_MS });
+      for (const e of this.players.values()) {
+        if (e.dead || !e.ragdoll) continue;
+        const cy = e.y - C.PLAYER.H * 0.5;
+        const d = Math.hypot(x - e.x, y - cy);
+        if (d > radius + 25) continue;
+        const q = 1 - d / (radius + 25);
+        this._damage(e, Math.max(6, Math.round(dmg * q)));
+        e.ht = C.HIT_FLASH_MS * 1.8;
+        e.htCrit = false;
+        e.stagger = 420;
+        const nx = d > 1 ? (e.x - x) / d : 0, ny = d > 1 ? (cy - y) / d : -1;
+        const kb = C.EXPL_KNOCK * (0.4 + 0.6 * q) * (e.blocking ? 0.35 : 1);
+        e.ragdoll.torso.setLinearVelocity(new pl.Vec2(
+          nx * kb / S, (ny * kb - 220) / S));
+        e.ragdoll.torso.setAngularVelocity((nx >= 0 ? 1 : -1) * 6 * q);
+        if (e.hp <= 0) { e.hp = 0; this._die(e); }
+      }
+    }
+
+    _tickBullets(dtMs) {
+      const dt = dtMs / 1000;
+      for (let i = this.bullets.length - 1; i >= 0; i--) {
+        const b = this.bullets[i];
+        b.t += dtMs;
+        if (b.g) b.vy += b.g * dt;   // grenades : trajectoire en cloche
+        const nx = b.x + b.vx * dt, ny = b.y + b.vy * dt;
+        let gone = b.t > C.BULLET_LIFE_MS ||
+          nx < -C.KILL_X || nx > C.WORLD.W + C.KILL_X || ny > C.WORLD.H + C.KILL_Y || ny < -600;
+        // décor (on teste le point d'arrivée et le milieu du segment)
+        if (!gone) {
+          const mx = (b.x + nx) / 2, my = (b.y + ny) / 2;
+          for (const q of this.plats) {
+            if ((nx > q.x && nx < q.x + q.w && ny > q.y && ny < q.y + q.h) ||
+                (mx > q.x && mx < q.x + q.w && my > q.y && my < q.y + q.h)) {
+              gone = true; break;
+            }
+          }
+        }
+        // joueurs : distance du segment parcouru à la tête (critique) ou au torse
+        if (!gone) {
+          for (const e of this.players.values()) {
+            if (e.dead || !e.ragdoll || e.id === b.o) continue;
+            // projectile explosif : pas de dégât direct, il détone au contact
+            if (b.expl) {
+              if (segDist(b.x, b.y, nx, ny, e.x, e.y - C.PLAYER.H * 0.45) < 28) {
+                gone = true;
+                break;
+              }
+              continue;
+            }
+            let dmg = 0, crit = false;
+            if (segDist(b.x, b.y, nx, ny, e.x, e.y - C.PLAYER.H + 9) < 12) {
+              dmg = Math.round(b.dmg * C.ATK_HEAD_MULT); crit = true;
+            } else if (segDist(b.x, b.y, nx, ny, e.x, e.y - C.PLAYER.H * 0.45) < 20) {
+              dmg = b.dmg;
+            }
+            if (!dmg) continue;
+            this._damage(e, dmg);
+            e.ht = C.HIT_FLASH_MS * (crit ? 1.8 : 1);
+            e.htCrit = crit;
+            e.stagger = Math.max(e.stagger, 140);
+            const sp = Math.hypot(b.vx, b.vy) || 1;
+            const kb = (80 + dmg * 7) * (e.blocking ? 0.35 : 1);
+            const tv = e.ragdoll.torso.getLinearVelocity();
+            e.ragdoll.torso.setLinearVelocity(new pl.Vec2(
+              tv.x + (b.vx / sp) * kb / S,
+              tv.y + ((b.vy / sp) * kb - 60) / S));
+            if (e.hp <= 0) { e.hp = 0; this._die(e); }
+            gone = true;
+            break;
+          }
+        }
+        if (gone) {
+          // détonation (décor, joueur ou fin de mèche) — mais pas dans le vide
+          if (b.expl && ny > -400 && ny < C.WORLD.H + C.KILL_Y &&
+              nx > -C.KILL_X && nx < C.WORLD.W + C.KILL_X) {
+            this._explode(nx, ny, b.dmg, b.expl);
+          }
+          this.bullets.splice(i, 1);
+        } else { b.x = nx; b.y = ny; }
       }
     }
 
@@ -362,6 +502,9 @@
       this.round.winner = '';
       for (const w of this.weapons.values()) this.pw.destroyBody(w.body);
       this.weapons.clear();
+      this.bullets.length = 0;
+      this.booms.length = 0;
+      this.dropT = C.DROP_MS;
       this.newMap();
       // répartit les joueurs sur des spawns distincts (les cadavres de la
       // manche précédente disparaissent : les pantins sont reconstruits)
@@ -382,6 +525,11 @@
       }
       this.pw.step(dt, 8, 3);
       this._tickWeapons(dtMs);
+      this._tickBullets(dtMs);
+      this._tickDrops(dtMs);
+      for (let i = this.booms.length - 1; i >= 0; i--) {
+        if ((this.booms[i].t -= dtMs) <= 0) this.booms.splice(i, 1);
+      }
       for (const p of this.players.values()) {
         if (p.ragdoll) {
           const t = p.ragdoll.torso.getPosition();
@@ -524,22 +672,33 @@
       this._servo(r.hips[1], p.onGround ? -swing : -0.3, T.G_JAMBES);
       this._servo(r.neck, 0, T.G_COU);
 
-      // lancer du bâton : il part en tournoyant dans la direction de visée
+      // lancer de l'arme tenue : elle part en tournoyant vers la visée
       if (inp.throw) {
         inp.throw = false;
         if (p.weapon && p.atkT < 0) {
-          p.weapon = false;
+          const type = p.weapon, ammo = p.ammo;
+          p.weapon = null;
           const dx = Math.cos(p.aim), dy = Math.sin(p.aim);
           this._spawnWeapon(
             p.x + dx * 30, p.y - 34 + dy * 30,
             dx * C.THROW_SPEED + vxPx * 0.5, dy * C.THROW_SPEED,
-            34 * p.facing, p.id);   // rotation d'hélice
+            34 * p.facing, p.id, type, ammo);   // rotation d'hélice
         }
       }
 
-      // attaque (au bâton, ou poings / pieds en alternance à mains nues)
+      const W = p.weapon ? C.WEAPONS[p.weapon] : null;
       p.cd = Math.max(0, p.cd - dtMs);
-      if (inp.attack) {
+      p.mu = Math.max(0, p.mu - dtMs);
+
+      if (W && !W.melee) {
+        // arme à feu : tir à la cadence tant que le bouton est tenu
+        if ((inp.attack || inp.attackHeld) && p.cd <= 0 && p.ammo > 0) {
+          this._fire(p, W);
+        }
+        inp.attack = false;
+        p.atkT = -1;
+      } else if (inp.attack) {
+        // mêlée (arme blanche, ou poings / pieds en alternance à mains nues)
         inp.attack = false;
         if (p.cd <= 0 && p.atkT < 0) {
           p.atkT = 0;
@@ -549,9 +708,9 @@
         }
       }
       const kicking = !p.weapon && p.atkT >= 0 && p.combo % 2 === 0;
-      // bras d'attaque asservi vers la souris ; pendant le coup il balaie
-      // un grand arc autour de la direction de visée (plus court au poing)
-      let rel = (p.weapon ? -0.35 : -0.15) * p.facing;
+      // bras d'attaque asservi vers la souris ; une arme à feu reste en joue,
+      // la mêlée balaie un grand arc autour de la visée (plus court au poing)
+      let rel = (W && !W.melee) ? 0 : (p.weapon ? -0.35 : -0.15) * p.facing;
       if (p.atkT >= 0 && !kicking) {
         const q = Math.min(1, p.atkT / C.ATK_TOTAL_MS);
         const e = 1 - (1 - q) * (1 - q);
@@ -592,9 +751,10 @@
 
     resolveHits(p) {
       // le coup part de la poitrine, dans la direction de la souris ;
-      // à mains nues : portée et dégâts réduits
-      const range = C.ATK_RANGE * (p.weapon ? 1 : C.FIST_RANGE_MUL);
-      const baseDmg = p.weapon ? C.ATK_DMG : C.FIST_DMG;
+      // portée et dégâts selon l'arme blanche (poings / pieds sans arme)
+      const W = p.weapon ? C.WEAPONS[p.weapon] : null;
+      const range = W ? W.range : C.ATK_RANGE * C.FIST_RANGE_MUL;
+      const baseDmg = W ? W.dmg : C.FIST_DMG;
       const dx = Math.cos(p.aim), dy = Math.sin(p.aim);
       const ox = p.x, oy = p.y - C.PLAYER.H * 0.55;
       const cx = ox + dx * range * 0.7;   // centre de la zone de frappe
@@ -662,8 +822,20 @@
     viewWeapons() {
       return [...this.weapons.values()].map((w) => {
         const q = w.body.getPosition();
-        return [Math.round(q.x * S), Math.round(q.y * S), r2(w.body.getAngle())];
+        return [Math.round(q.x * S), Math.round(q.y * S), r2(w.body.getAngle()), w.type];
       });
+    }
+
+    viewBullets() {
+      return this.bullets.map((b) => [Math.round(b.x), Math.round(b.y),
+        Math.round(b.x - b.vx * 0.015), Math.round(b.y - b.vy * 0.015),
+        b.expl ? 1 : 0]);
+    }
+
+    // explosions : position, rayon, progression de l'effet (1 -> 0)
+    viewBooms() {
+      return this.booms.map((b) => [Math.round(b.x), Math.round(b.y),
+        b.r, r2(b.t / C.EXPL_FX_MS)]);
     }
 
     snapshot() {
@@ -672,11 +844,14 @@
         players: [...this.players.values()].map((p) => ({
           id: p.id, n: p.name, c: p.color, f: p.facing,
           hp: p.hp, sh: Math.round(p.sh), bl: p.blocking ? 1 : 0,
-          d: p.dead ? 1 : 0, s: p.score, w: p.weapon ? 1 : 0,
+          d: p.dead ? 1 : 0, s: p.score,
+          w: p.weapon || 0, mn: p.ammo, mu: p.mu > 0 ? 1 : 0,
           ht: p.ht > 0 ? (p.htCrit ? 2 : 1) : 0,
           b: this.viewPlayer(p),
         })),
         wp: this.viewWeapons(),
+        bu: this.viewBullets(),
+        bx: this.viewBooms(),
         plats: this.plats.map((q) => [q.x | 0, q.y | 0, q.w | 0, q.h, q.solid ? 1 : 0]),
         round: {
           n: this.round.n, ph: this.round.phase,

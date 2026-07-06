@@ -37,13 +37,36 @@
 
       drawPlats(view.plats);
 
-      // bâtons libres (lancés ou lâchés)
+      // armes libres (lancées, lâchées ou larguées du ciel)
       ctx.lineCap = 'round';
-      ctx.strokeStyle = '#b98a4e';
-      ctx.lineWidth = 6;
       for (const w of view.weapons || []) {
-        const dx = Math.cos(w[2]) * 22, dy = Math.sin(w[2]) * 22;
-        line(w[0] - dx, w[1] - dy, w[0] + dx, w[1] + dy);
+        drawWeaponShape(w[3] || 'baton', w[0], w[1], w[2]);
+      }
+
+      // balles traçantes — les projectiles explosifs sont des billes sombres
+      for (const b of view.bullets || []) {
+        if (b[4]) {
+          ctx.fillStyle = '#3d4354';
+          ctx.beginPath(); ctx.arc(b[0], b[1], 6, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#ffb15c';
+          ctx.beginPath(); ctx.arc(b[0], b[1], 2.5, 0, Math.PI * 2); ctx.fill();
+        } else {
+          ctx.strokeStyle = '#ffe9a8';
+          ctx.lineWidth = 3;
+          line(b[0], b[1], b[2], b[3]);
+        }
+      }
+
+      // explosions : boule de feu qui s'étend et s'estompe (q va de 1 à 0)
+      for (const e of view.booms || []) {
+        const [x, y, r, q] = e;
+        const k = 1 - q;
+        ctx.globalAlpha = Math.max(0, q);
+        ctx.fillStyle = '#ffb15c';
+        ctx.beginPath(); ctx.arc(x, y, r * (0.45 + 0.55 * k), 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#fff3c4';
+        ctx.beginPath(); ctx.arc(x, y, r * 0.4 * q, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 1;
       }
 
       // les cadavres d'abord (sous les vivants), puis les vivants
@@ -105,10 +128,16 @@
         bend(hpx, hpy, l2x, l2y, -f * 4);
         bend(shx, shy, a2x, a2y, -f * 3);
         bend(shx, shy, a1x, a1y, f * 3);
-        // le bâton prolonge le bras (même angle physique) — si on le tient
-        if (p.w) {
-          if (!halo) { ctx.strokeStyle = '#b98a4e'; ctx.lineWidth = 6; }
-          line(a1x, a1y, a1x + Math.cos(ba) * 44, a1y + Math.sin(ba) * 44);
+        // l'arme tenue prolonge le bras (même angle physique)
+        if (p.w && !halo) {
+          drawWeaponShape(p.w, a1x, a1y, ba, true);
+          // flash de bouche au tir
+          if (p.mu) {
+            ctx.fillStyle = 'rgba(255,220,120,0.9)';
+            ctx.beginPath();
+            ctx.arc(a1x + Math.cos(ba) * 30, a1y + Math.sin(ba) * 30, 7, 0, Math.PI * 2);
+            ctx.fill();
+          }
         }
       };
       // bulle de bouclier (clic droit maintenu)
@@ -149,7 +178,8 @@
         ctx.fillStyle = isMe ? '#ffffff' : 'rgba(255,255,255,0.75)';
         ctx.font = (isMe ? '700 ' : '') + '15px system-ui, sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText(p.n, tx, by - 7);
+        const gun = p.w && C.WEAPONS[p.w] && C.WEAPONS[p.w].ammo;
+        ctx.fillText(gun ? p.n + ' · ' + p.mn : p.n, tx, by - 7);
       }
       ctx.globalAlpha = 1;
     }
@@ -159,6 +189,95 @@
       ctx.moveTo(x1, y1);
       ctx.lineTo(x2, y2);
       ctx.stroke();
+    }
+
+    // dessine une arme à (x,y) orientée selon ang ; held = tenue en main
+    // (l'origine est alors la main, sinon le centre de l'objet)
+    function drawWeaponShape(type, x, y, ang, held) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(ang);
+      if (!held) ctx.translate(-16, 0);
+      ctx.lineCap = 'round';
+      switch (type) {
+        case 'epee':
+          ctx.strokeStyle = '#cfd6e4'; ctx.lineWidth = 5;
+          line(0, 0, 50, 0);
+          ctx.strokeStyle = '#8a6b3f'; ctx.lineWidth = 4;
+          line(6, -7, 6, 7);
+          break;
+        case 'lance':
+          ctx.strokeStyle = '#a5814e'; ctx.lineWidth = 4;
+          line(-12, 0, 62, 0);
+          ctx.strokeStyle = '#cfd6e4'; ctx.lineWidth = 5;
+          line(62, 0, 74, 0);
+          break;
+        case 'pistolet':
+          ctx.strokeStyle = '#3d4354'; ctx.lineWidth = 7;
+          line(0, 0, 16, 0);
+          line(2, 2, 2, 9);
+          break;
+        case 'uzi':
+          ctx.strokeStyle = '#3d4354'; ctx.lineWidth = 8;
+          line(-2, 0, 20, 0);
+          line(4, 3, 4, 12);
+          break;
+        case 'pompe':
+          ctx.strokeStyle = '#5a4632'; ctx.lineWidth = 7;
+          line(-8, 0, 8, 0);
+          ctx.strokeStyle = '#3d4354'; ctx.lineWidth = 5;
+          line(8, 0, 32, 0);
+          break;
+        case 'revolver':
+          ctx.strokeStyle = '#8b93a8'; ctx.lineWidth = 6;
+          line(0, 0, 20, 0);
+          ctx.strokeStyle = '#5a4632'; ctx.lineWidth = 5;
+          line(1, 2, 1, 10);
+          break;
+        case 'ak47':
+          ctx.strokeStyle = '#5a4632'; ctx.lineWidth = 6;
+          line(-12, 0, 6, 0);
+          ctx.strokeStyle = '#3d4354'; ctx.lineWidth = 5;
+          line(6, 0, 36, 0);
+          line(10, 3, 8, 12);   // chargeur courbe
+          break;
+        case 'minigun':
+          ctx.strokeStyle = '#2f3542'; ctx.lineWidth = 12;
+          line(-10, 0, 10, 0);
+          ctx.strokeStyle = '#565f75'; ctx.lineWidth = 3;
+          line(10, -4, 34, -4); line(10, 0, 36, 0); line(10, 4, 34, 4);
+          break;
+        case 'sabre':
+          ctx.strokeStyle = '#3d4354'; ctx.lineWidth = 6;
+          line(-2, 0, 10, 0);
+          ctx.strokeStyle = 'rgba(120,220,255,0.35)'; ctx.lineWidth = 10;
+          line(10, 0, 58, 0);
+          ctx.strokeStyle = '#8ce9ff'; ctx.lineWidth = 5;
+          line(10, 0, 58, 0);
+          break;
+        case 'grenades':
+          ctx.strokeStyle = '#4c6b4f'; ctx.lineWidth = 10;
+          line(0, 0, 22, 0);
+          ctx.strokeStyle = '#3d4354'; ctx.lineWidth = 4;
+          line(4, 3, 4, 11);
+          break;
+        case 'rpg':
+          ctx.strokeStyle = '#4f5568'; ctx.lineWidth = 9;
+          line(-14, 0, 26, 0);
+          ctx.fillStyle = '#c0392b';
+          ctx.beginPath(); ctx.arc(30, 0, 6, 0, Math.PI * 2); ctx.fill();
+          break;
+        case 'sniper':
+          ctx.strokeStyle = '#2f3542'; ctx.lineWidth = 5;
+          line(-10, 0, 42, 0);
+          ctx.fillStyle = '#5ce1e6';
+          ctx.beginPath(); ctx.arc(8, -5, 3, 0, Math.PI * 2); ctx.fill();
+          break;
+        default:   // bâton
+          ctx.strokeStyle = '#b98a4e'; ctx.lineWidth = 6;
+          line(0, 0, 44, 0);
+      }
+      ctx.restore();
     }
 
     // trait courbé : segment avec un ventre perpendiculaire (effet caoutchouc)
