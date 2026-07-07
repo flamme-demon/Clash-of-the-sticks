@@ -1223,8 +1223,13 @@
       const lean = lie ? p.facing * 1.45 : clamp(vxPx / C.MOVE, -1, 1) * T.LEAN;
       // écrasé/couché : on plaque franchement le torse à l'horizontale (il
       // s'affale au sol sous le bloc) ; sinon équilibre debout normal
-      const k = lie ? 24 : (p.stagger > 0 ? 2 : (p.onGround ? T.K_SOL : T.K_AIR));
-      const d = lie ? (limp ? 0.9 : 1.1) : (p.stagger > 0 ? 0.3 : T.AMORTI);
+      const k0 = lie ? 24 : (p.stagger > 0 ? 2 : (p.onGround ? T.K_SOL : T.K_AIR));
+      const d0 = lie ? (limp ? 0.9 : 1.1) : (p.stagger > 0 ? 0.3 : T.AMORTI);
+      // pendant un coup au sol : le torse se plante fermement, sinon les
+      // réactions du bras/pied secouent tout le corps (effet « pro de kung-fu »)
+      const striking = p.atkT >= 0 && !lie && p.stagger <= 0 && p.onGround;
+      const k = striking ? Math.max(k0, 78) : k0;
+      const d = striking ? Math.max(d0, 2.2) : d0;
       torso.applyTorque(-(torso.getAngle() - lean) * k - torso.getAngularVelocity() * d);
 
       // couples max ré-appliqués chaque tick ; réduits quasi à néant quand on
@@ -1300,10 +1305,11 @@
       // bras arrière : balance en course, pendouille et ballotte au repos
       this._servo(r.shoulders[1],
         -Math.sin(p.phase) * 0.8 * run + (0.25 + Math.sin(p.phase * 0.5) * 0.3) * (1 - run), 8);
-      // coup de pied : la jambe avant part violemment vers la visée
+      // coup de pied : la jambe avant part vers la visée (mesuré : ce n'est
+      // que la jambe qui bouge, pas tout le corps qui part en vrille)
       if (kicking) {
-        r.hips[0].setMaxMotorTorque(T.T_JAMBES * 2.5);
-        this._servo(r.hips[0], p.aim - torso.getAngle() - Math.PI / 2, 30);
+        r.hips[0].setMaxMotorTorque(T.T_JAMBES * 1.7);
+        this._servo(r.hips[0], p.aim - torso.getAngle() - Math.PI / 2, 18);
       }
     }
 

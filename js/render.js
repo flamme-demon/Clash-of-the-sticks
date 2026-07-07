@@ -27,6 +27,10 @@
     function streak(x, y, vx, vy, life) {
       particles.push({ k: 1, x, y, vx, vy, life, max: life });
     }
+    // goutte colorée (le « sang » à la couleur du perso quand il se fait taper)
+    function drop(x, y, vx, vy, col, r, life) {
+      particles.push({ k: 2, x, y, vx, vy, col, r, life, max: life });
+    }
 
     function updateParticles(view, dt) {
       if (dt <= 0 || dt > 0.1) dt = 0.016;
@@ -37,9 +41,25 @@
         const x = p.b[0];
         const footY = Math.max(p.b[10], p.b[12]);   // pied le plus bas
         let st = pstate.get(p.id);
-        if (!st) { st = { x, y: footY, vx: 0, vy: 0, grounded: true, skidAcc: 0 }; pstate.set(p.id, st); }
+        if (!st) { st = { x, y: footY, vx: 0, vy: 0, grounded: true, skidAcc: 0, ht: 0 }; pstate.set(p.id, st); }
         const vx = (x - st.x) / dt, vy = (footY - st.y) / dt;
         const grounded = nearGround(x, footY, view.plats);
+        // coup encaissé (ht passe de 0 à non nul) : gicle des gouttes de la
+        // couleur du perso (le « sang » de Stick Fight), projetées dans le
+        // sens de l'éjection + éparpillement, avec un biais vers le haut
+        const ht = p.ht || 0;
+        if (ht && !st.ht) {
+          const cx = p.b[0], cy = p.b[1] - 6;
+          const n = ht === 2 ? 16 : 10;   // plus de gouttes sur un coup critique
+          for (let k = 0; k < n; k++) {
+            const ang = rand(0, Math.PI * 2);
+            const sp = rand(70, 300) * (ht === 2 ? 1.25 : 1);
+            drop(cx + rand(-5, 5), cy + rand(-7, 7),
+              Math.cos(ang) * sp + st.vx * 0.35, Math.sin(ang) * sp - 90,
+              p.c, rand(2, 4.5), rand(0.35, 0.6));
+          }
+        }
+        st.ht = ht;
         // saut : au sol l'instant d'avant, file vers le haut
         if (st.grounded && vy < -320) {
           for (let k = 0; k < 5; k++) {
@@ -81,10 +101,15 @@
     function drawParticles() {
       for (const q of particles) {
         const a = Math.max(0, q.life / q.max);
-        if (q.k === 0) {
+        if (q.k === 0) {                     // bouffée de poussière
           ctx.fillStyle = 'rgba(240,244,250,' + (a * 0.5).toFixed(3) + ')';
           ctx.beginPath(); ctx.arc(q.x, q.y, q.r, 0, Math.PI * 2); ctx.fill();
-        } else {
+        } else if (q.k === 2) {              // goutte colorée (sang)
+          ctx.globalAlpha = a;
+          ctx.fillStyle = q.col;
+          ctx.beginPath(); ctx.arc(q.x, q.y, q.r, 0, Math.PI * 2); ctx.fill();
+          ctx.globalAlpha = 1;
+        } else {                             // traînée blanche (saut / impact)
           const sp = Math.hypot(q.vx, q.vy) || 1;
           ctx.strokeStyle = 'rgba(240,244,250,' + (a * 0.85).toFixed(3) + ')';
           ctx.lineWidth = 2;
