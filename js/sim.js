@@ -38,6 +38,16 @@
       this.spawns = [];           // {x,y} — pieds posés sur une plateforme
       this.round = { n: 1, phase: 'play', timer: 0, winner: '' };
       this.weapons = new Map();   // armes libres (lancées / lâchées / larguées)
+      this.theme = 0;             // index dans C.THEMES
+      this.hazards = [];          // pics {x,y,w,h}
+      this.lava = null;           // {y, rise, max} — surface, vitesse, plafond
+      this.mapT = 0;              // horloge des objets animés de la carte
+      this.balls = [];            // boules piquantes {ax,ay,L,amp,om,ph,x,y}
+      this.lasers = [];           // rayons {x1,y1,x2,y2,ph,on}
+      this.swings = [];           // balançoires {ax,ay,L,amp,om,ph,w,body}
+      this.crates = [];           // caisses poussables {body,s}
+      this.mapBodies = [];        // corps Planck des objets (détruits au reset)
+      this.customMap = null;      // map de l'éditeur ; null = cartes aléatoires
       this._wid = 0;
       this.bullets = [];          // balles en vol
       this.booms = [];            // explosions en cours (effet + fenêtre rendu)
@@ -83,6 +93,10 @@
         hitIds: new Set(),        // déjà touchés pendant ce coup
         weapon: 'baton',          // type d'arme tenue, null = poings et pieds
         ammo: 0,                  // munitions restantes (armes à feu)
+        kame: 0,                  // ms restants du poing Kaméaméa chargé
+        hzCd: 0,                  // invulnérabilité aux pics (ms restants)
+        spin: 0,                  // rotation de souris cumulée (charge en cours)
+        spinIdle: 0, _pa: 0,      // pause de rotation + dernier angle de visée
         mu: 0,                    // flash de bouche (ms restants)
         combo: 0,                 // alterne poing / pied à mains nues
         ragdoll: null,
@@ -129,6 +143,7 @@
       p.atkT = -1; p.cd = 0; p.ht = 0; p.htCrit = false;
       p.stagger = 0; p.phase = 0;
       p.weapon = 'baton'; p.ammo = 0; p.mu = 0;
+      p.kame = 0; p.spin = 0; p.spinIdle = 0; p._pa = p.aim;
       p.jumps = 0; p.onGround = true;
     }
 
@@ -249,9 +264,11 @@
         type: 'dynamic', position: V(x, y), angle: Math.atan2(vy, vx),
         bullet: true, angularDamping: 0.05,
       });
-      // en vol rapide : trajectoire tendue (peu de gravité), il file droit
-      // vers la cible ; la gravité normale revient une fois ralenti
-      if (Math.hypot(vx, vy) > 500) b.setGravityScale(0.3);
+      // en vol rapide : trajectoire tendue, il file droit vers la cible ;
+      // une arme blanche part comme un javelot (aucune gravité en vol),
+      // la gravité normale revient une fois ralenti
+      const melee = (C.WEAPONS[type || 'baton'] || {}).melee;
+      if (Math.hypot(vx, vy) > 500) b.setGravityScale(melee ? 0 : 0.3);
       // collision : petite boule au centre (le bâton visuel tournoie autour) —
       // sinon les extrémités raclent le sol en plein vol et le font ricocher
       b.createFixture({
@@ -276,6 +293,11 @@
       if (this.weapons.size >= C.DROP_MAX) return;
       const type = C.DROPS[Math.floor(Math.random() * C.DROPS.length)];
       this._spawnWeapon(rand(120, C.WORLD.W - 120), -60, 0, 80, rand(-3, 3), null, type);
+      // largage en douceur : quasi sans gravité, la chute est plafonnée
+      // dans _tickWeapons — on peut la cueillir au vol
+      const w = this.weapons.get(this._wid);
+      w.drop = true;
+      w.body.setGravityScale(0.1);
     }
 
     _tickWeapons(dtMs) {
@@ -292,7 +314,12 @@
         }
         const v = w.body.getLinearVelocity();
         const sp = Math.hypot(v.x, v.y) * S;
-        if (sp < 500) {
+        // largage : descente plafonnée jusqu'au sol (le ramassage plus bas
+        // reste actif, on peut donc la cueillir en plein vol)
+        if (w.drop && v.y * S > C.DROP_FALL) {
+          w.body.setLinearVelocity(new pl.Vec2(v.x, C.DROP_FALL / S));
+        }
+        if (!w.drop && sp < 500) {
           w.body.setGravityScale(1);      // fin du vol tendu
           w.body.setAngularDamping(3);    // l'hélice s'arrête de rouler
         }
@@ -333,6 +360,137 @@
           }
         }
       }
+    }
+
+    // ---------- dangers : pics et lave ----------
+    _tickHazards(dtMs) {
+      const dt = dtMs / 1000;
+      if (this.lava && this.lava.rise && this.round.phase === 'play') {
+        this.lava.y = Math.max(this.lava.max, this.lava.y - this.lava.rise * dt);
+      }
+      for (const p of this.players.values()) {
+        if (p.dead || !p.ragdoll) continue;
+        p.hzCd = Math.max(0, p.hzCd - dtMs);
+        // lave : brûlure continue, et elle recrache vers le haut
+        if (this.lava && p.y > this.lava.y + 4) {
+          this._damage(p, C.LAVA_DPS * dt);
+          if (p.hzCd <= 0) { p.hzCd = 250; p.ht = C.HIT_FLASH_MS; p.htCrit = false; }
+          p.stagger = Math.max(p.stagger, 200);
+          const tv = p.ragdoll.torso.getLinearVelocity();
+          if (tv.y * S > -300) {
+            p.ragdoll.torso.setLinearVelocity(new pl.Vec2(tv.x, -C.LAVA_KNOCK / S));
+          }
+        } else if (p.hzCd <= 0) {
+          // pics : gros coup sec + projection, puis brève invulnérabilité
+          for (const h of this.hazards) {
+            if (p.x < h.x - 6 || p.x > h.x + h.w + 6 ||
+                p.y < h.y - 2 || p.y > h.y + h.h + 24) continue;
+            p.hzCd = C.HAZARD_CD_MS;
+            this._damage(p, C.SPIKE_DMG);
+            p.ht = C.HIT_FLASH_MS; p.htCrit = false;
+            p.stagger = 300;
+            const tv = p.ragdoll.torso.getLinearVelocity();
+            p.ragdoll.torso.setLinearVelocity(new pl.Vec2(tv.x, -700 / S));
+            break;
+          }
+        }
+        if (p.hp <= 0) { p.hp = 0; this._die(p); }
+      }
+    }
+
+    // ---------- objets animés de la carte ----------
+    _tickMapObjects(dtMs) {
+      const dt = dtMs / 1000;
+      this.mapT += dtMs;
+      const t = this.mapT / 1000;
+
+      // boules piquantes : pendule, dégâts au contact + grosse projection
+      for (const b of this.balls) {
+        const th = b.amp * Math.sin(b.om * t + b.ph);
+        b.x = b.ax + Math.sin(th) * b.L;
+        b.y = b.ay + Math.cos(th) * b.L;
+        for (const p of this.players.values()) {
+          if (p.dead || !p.ragdoll || p.hzCd > 0) continue;
+          const cy = p.y - C.PLAYER.H * 0.5;
+          const d = Math.hypot(b.x - p.x, b.y - cy);
+          if (d > b.r + 22) continue;
+          p.hzCd = C.HAZARD_CD_MS;
+          this._damage(p, C.BALL_DMG);
+          p.ht = C.HIT_FLASH_MS; p.htCrit = false;
+          p.stagger = 400;
+          const nx = (p.x - b.x) / (d || 1), ny = (cy - b.y) / (d || 1);
+          p.ragdoll.torso.setLinearVelocity(new pl.Vec2(
+            nx * C.BALL_KNOCK / S, (ny * C.BALL_KNOCK - 250) / S));
+          if (p.hp <= 0) { p.hp = 0; this._die(p); }
+        }
+      }
+
+      // lasers clignotants : traverser un rayon allumé coûte cher
+      for (const l of this.lasers) {
+        const cyc = (this.mapT + l.ph) % (C.LASER_ON_MS + C.LASER_OFF_MS);
+        l.on = cyc < C.LASER_ON_MS;
+        if (!l.on) continue;
+        for (const p of this.players.values()) {
+          if (p.dead || !p.ragdoll || p.hzCd > 0) continue;
+          if (segDist(l.x1, l.y1, l.x2, l.y2, p.x, p.y - C.PLAYER.H * 0.5) > 18) continue;
+          p.hzCd = C.HAZARD_CD_MS;
+          this._damage(p, C.LASER_DMG);
+          p.ht = C.HIT_FLASH_MS; p.htCrit = false;
+          p.stagger = 300;
+          if (p.hp <= 0) { p.hp = 0; this._die(p); }
+        }
+      }
+
+      // balançoires : la planche suit son arc de pendule (vitesse imposée,
+      // pour que la friction emporte ceux qui sont debout dessus)
+      for (const sw of this.swings) {
+        const th = sw.amp * Math.sin(sw.om * t + sw.ph);
+        const tx = sw.ax + Math.sin(th) * sw.L, ty = sw.ay + Math.cos(th) * sw.L;
+        const q = sw.body.getPosition();
+        sw.body.setLinearVelocity(new pl.Vec2(
+          (tx / S - q.x) / dt, (ty / S - q.y) / dt));
+        sw.body.setAngularVelocity((-th * 0.5 - sw.body.getAngle()) / dt);
+      }
+
+      // caisses parties dans le vide (trou ou lave montante)
+      for (let i = this.crates.length - 1; i >= 0; i--) {
+        const q = this.crates[i].body.getPosition();
+        if (q.y * S > C.WORLD.H + C.KILL_Y * 2) {
+          this.pw.destroyBody(this.crates[i].body);
+          const bi = this.mapBodies.indexOf(this.crates[i].body);
+          if (bi >= 0) this.mapBodies.splice(bi, 1);
+          this.crates.splice(i, 1);
+        }
+      }
+
+      // sols clignotants et friables
+      for (const q of this.plats) {
+        if (q.mode === 'blink') {
+          const cyc = (this.mapT + q.ph) % (C.BLINK_ON_MS + C.BLINK_OFF_MS);
+          const off = cyc >= C.BLINK_ON_MS;
+          if (off !== !!q.off) { q.off = off; q.body.setActive(!off); }
+        } else if (q.mode === 'crumble' && !q.off) {
+          if (q.timer > 0) {
+            q.timer -= dtMs;
+            if (q.timer <= 0) { q.off = true; q.body.setActive(false); }
+          } else {
+            // un joueur pose le pied dessus : le bloc tremble puis cède
+            for (const p of this.players.values()) {
+              if (p.dead || !p.onGround) continue;
+              if (p.x > q.x - 6 && p.x < q.x + q.w + 6 &&
+                  Math.abs(p.y - q.y) < 12) { q.timer = C.CRUMBLE_MS; break; }
+            }
+          }
+        }
+      }
+    }
+
+    // glace touchée par une balle ou une explosion : elle se fissure puis vole
+    // en éclats (le bloc disparaît pour la manche)
+    _damageIce(q, dmg) {
+      if (!q.ice || q.off) return;
+      q.iceHp -= dmg;
+      if (q.iceHp <= 0) { q.off = true; q.body.setActive(false); }
     }
 
     // ---------- balles ----------
@@ -379,6 +537,12 @@
         e.ragdoll.torso.setAngularVelocity((nx >= 0 ? 1 : -1) * 6 * q);
         if (e.hp <= 0) { e.hp = 0; this._die(e); }
       }
+      // le souffle fait aussi voler la glace en éclats
+      for (const q of this.plats) {
+        if (!q.ice || q.off) continue;
+        const cx = clamp(x, q.x, q.x + q.w), cy2 = clamp(y, q.y, q.y + q.h);
+        if (Math.hypot(x - cx, y - cy2) < radius) this._damageIce(q, dmg);
+      }
     }
 
     _tickBullets(dtMs) {
@@ -394,8 +558,10 @@
         if (!gone) {
           const mx = (b.x + nx) / 2, my = (b.y + ny) / 2;
           for (const q of this.plats) {
+            if (q.off) continue;   // bloc disparu : les balles passent
             if ((nx > q.x && nx < q.x + q.w && ny > q.y && ny < q.y + q.h) ||
                 (mx > q.x && mx < q.x + q.w && my > q.y && my < q.y + q.h)) {
+              this._damageIce(q, b.dmg);
               gone = true; break;
             }
           }
@@ -446,11 +612,137 @@
     }
 
     // ---------- arène ----------
+    // la carte suivante : celle de l'éditeur si une map personnalisée est
+    // chargée (this.customMap), sinon une carte aléatoire
     newMap() {
       const { W, H } = C.WORLD;
       for (const b of this.platBodies) this.pw.destroyBody(b);
+      for (const b of this.mapBodies) this.pw.destroyBody(b);
       this.platBodies = [];
+      this.mapBodies = [];
       this.plats = [];
+      this.hazards = [];
+      this.lava = null;
+      this.balls = [];
+      this.lasers = [];
+      this.swings = [];
+      this.crates = [];
+      this.mapT = 0;
+
+      let swingDefs, crateDefs, defSpawns = null;
+      if (this.customMap) {
+        const r = this._loadDef(this.customMap);
+        swingDefs = r.swings; crateDefs = r.crates; defSpawns = r.spawns;
+      } else {
+        const g = this._randomMap();
+        swingDefs = g.swings; crateDefs = g.crates;
+      }
+
+      // corps statiques Planck des plateformes
+      for (const q of this.plats) {
+        const b = this.pw.createBody({ position: V(q.x + q.w / 2, q.y + q.h / 2) });
+        const fx = b.createFixture({
+          // la glace est physiquement glissante (presque aucune friction)
+          shape: new pl.Box(q.w / 2 / S, q.h / 2 / S),
+          friction: q.ice ? 0.01 : 0.6,
+          filterCategoryBits: CAT.WORLD, filterMaskBits: CAT.BODY | CAT.LIMB,
+        });
+        fx.setUserData(q.solid ? { world: true } : { world: true, oneway: true, top: q.y });
+        q.body = b;
+        this.platBodies.push(b);
+      }
+
+      // balançoires : planches cinématiques qui oscillent, praticables
+      for (const d of swingDefs) {
+        const sw = {
+          ax: d.ax, ay: d.ay, L: d.L, amp: d.amp,
+          om: Math.sqrt(C.GRAVITY / d.L) * 0.7, ph: d.ph || 0, w: d.w || 150,
+        };
+        sw.body = this.pw.createBody({ type: 'kinematic', position: V(sw.ax, sw.ay + sw.L) });
+        sw.body.createFixture({
+          shape: new pl.Box(sw.w / 2 / S, 7 / S), friction: 0.9,
+          filterCategoryBits: CAT.WORLD, filterMaskBits: CAT.BODY | CAT.LIMB,
+        }).setUserData({ world: true });
+        this.mapBodies.push(sw.body);
+        this.swings.push(sw);
+      }
+      // caisses poussables
+      for (const d of crateDefs) {
+        const s = C.CRATE_S;
+        const body = this.pw.createBody({ type: 'dynamic', position: V(d.x, d.y) });
+        body.createFixture({
+          shape: new pl.Box(s / 2 / S, s / 2 / S), density: 0.4, friction: 0.5,
+          filterCategoryBits: CAT.WORLD | CAT.BODY,
+          filterMaskBits: CAT.WORLD | CAT.BODY | CAT.LIMB,
+        }).setUserData({ world: true });
+        this.mapBodies.push(body);
+        this.crates.push({ body, s });
+      }
+
+      // points d'apparition : ceux de l'éditeur, sinon répartis sur les
+      // plateformes stables (jamais sur des pics)
+      if (defSpawns && defSpawns.length) {
+        this.spawns = defSpawns.map((s) => ({ x: s.x, y: s.y }));
+      } else {
+        this.spawns = [];
+        for (const q of this.plats) {
+          if (q.mode) continue;
+          const free = (x) => !this.hazards.some((h) =>
+            x > h.x - 30 && x < h.x + h.w + 30 && Math.abs(q.y - h.y - 14) < 2);
+          for (const fx of q.w > 300 ? [0.2, 0.5, 0.8] : [0.5]) {
+            const x = q.x + q.w * fx;
+            if (free(x)) this.spawns.push({ x, y: q.y });
+          }
+        }
+        if (!this.spawns.length && this.plats.length) {
+          const q = this.plats[0];
+          this.spawns.push({ x: q.x + q.w / 2, y: q.y });
+        }
+        if (!this.spawns.length) this.spawns.push({ x: W / 2, y: H - 130 });
+      }
+    }
+
+    // charge une map de l'éditeur : { theme, plats:[{x,y,w,h,mode,ice}],
+    // spikes:[{x,y,w}], lava:{y,rise}, balls:[{ax,ay,L,amp}], lasers:[{x1..y2}],
+    // swings:[{ax,ay,L,amp,w}], crates:[{x,y}], spawns:[{x,y}] }
+    _loadDef(d) {
+      const { H } = C.WORLD;
+      this.theme = Math.min(C.THEMES.length - 1, Math.max(0, d.theme | 0));
+      for (const q of d.plats || []) {
+        this.plats.push({
+          x: q.x, y: q.y, w: q.w, h: q.h, solid: true,
+          mode: q.mode || null, ph: rand(0, 4000), timer: 0,
+          ice: !!q.ice, iceHp: C.ICE_HP,
+        });
+      }
+      for (const s of d.spikes || []) {
+        this.hazards.push({ x: s.x, y: s.y, w: s.w, h: 14 });
+      }
+      if (d.lava) {
+        this.lava = { y: d.lava.y, rise: d.lava.rise ? C.LAVA_RISE : 0, max: H - 520 };
+      }
+      for (const b of d.balls || []) {
+        this.balls.push({
+          ax: b.ax, ay: b.ay, L: b.L, amp: b.amp || 0.8,
+          om: Math.sqrt(C.GRAVITY / b.L) * 0.8, ph: rand(0, 6.28),
+          r: 30, x: b.ax, y: b.ay + b.L,
+        });
+      }
+      for (const l of d.lasers || []) {
+        this.lasers.push({ x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2,
+          ph: rand(0, 2000), on: false });
+      }
+      return {
+        swings: (d.swings || []).map((s) => ({ ax: s.ax, ay: s.ay, L: s.L,
+          amp: s.amp || 0.45, w: s.w || 150, ph: rand(0, 6.28) })),
+        crates: d.crates || [],
+        spawns: d.spawns || null,
+      };
+    }
+
+    // génération aléatoire (comportement historique)
+    _randomMap() {
+      const { W, H } = C.WORLD;
       // sol : 2-3 gros blocs séparés par des trous mortels
       const gy = H - 130;
       let x = rand(30, 110);
@@ -468,31 +760,79 @@
         for (let i = 0; i < n; i++) {
           const w = rand(190, 380);
           const px = rand(60, W - 60 - w);
-          const py = ry + rand(-40, 40);
-          if (this.plats.some((q) => Math.abs(q.y - py) < 70 &&
+          const py = ry + rand(-30, 30);
+          if (this.plats.some((q) => Math.abs(q.y - py) < 110 &&
               px < q.x + q.w + 60 && px + w > q.x - 60)) continue;
-          this.plats.push({ x: px, y: py, w, h: 30, solid: true });
+          // blocs épais : assez de flanc pour s'y coller et sauter au mur
+          this.plats.push({ x: px, y: py, w, h: rand(55, 90), solid: true });
         }
       }
-      // corps statiques Planck
+      // blocs spéciaux (flottants seulement, jamais le sol) : clignotants,
+      // friables (s'effondrent après un passage) ou en glace (glissante,
+      // cassable par les balles et les explosions)
       for (const q of this.plats) {
-        const b = this.pw.createBody({ position: V(q.x + q.w / 2, q.y + q.h / 2) });
-        const fx = b.createFixture({
-          shape: new pl.Box(q.w / 2 / S, q.h / 2 / S), friction: 0.6,
-          filterCategoryBits: CAT.WORLD, filterMaskBits: CAT.BODY | CAT.LIMB,
+        if (q.y >= gy) continue;
+        const r = Math.random();
+        if (r < 0.16) { q.mode = 'blink'; q.ph = rand(0, 4000); }
+        else if (r < 0.30) { q.mode = 'crumble'; q.timer = 0; }
+        else if (r < 0.30 + C.ICE_CHANCE) { q.ice = true; q.iceHp = C.ICE_HP; }
+      }
+      // thème visuel + dangers : pics sur certains blocs, lave en contrebas
+      // (parfois montante — grimpez !)
+      this.theme = Math.floor(Math.random() * C.THEMES.length);
+      for (const q of this.plats) {
+        if (q.w < 170 || q.mode || q.ice || Math.random() > C.SPIKE_CHANCE) continue;
+        // les pics couvrent une partie du dessus du bloc
+        const sw = Math.min(q.w - 40, rand(90, 220));
+        const sx = q.x + rand(20, q.w - 20 - sw);
+        this.hazards.push({ x: sx, y: q.y - 14, w: sw, h: 14 });
+      }
+      if (Math.random() < C.LAVA_CHANCE) {
+        this.lava = {
+          y: H - 20,
+          rise: Math.random() < 0.5 ? C.LAVA_RISE : 0,
+          max: H - 520,           // la montée s'arrête aux étages supérieurs
+        };
+      }
+      // boules piquantes : pendules accrochés au plafond
+      if (Math.random() < 0.35) {
+        const n = 1 + (Math.random() < 0.3 ? 1 : 0);
+        for (let i = 0; i < n; i++) {
+          const L = rand(200, 340);
+          this.balls.push({
+            ax: rand(W * 0.2, W * 0.8), ay: rand(30, 130), L,
+            amp: rand(0.55, 1.05), om: Math.sqrt(C.GRAVITY / L) * 0.8,
+            ph: rand(0, 6.28), r: 30, x: 0, y: 0,
+          });
+        }
+      }
+      // laser : rayon clignotant vertical ou horizontal
+      if (Math.random() < 0.3) {
+        if (Math.random() < 0.5) {
+          const lx = rand(W * 0.2, W * 0.8);
+          this.lasers.push({ x1: lx, y1: -40, x2: lx, y2: H, ph: rand(0, 2000), on: false });
+        } else {
+          const ly = rand(H - 460, H - 220);
+          this.lasers.push({ x1: -40, y1: ly, x2: W + 40, y2: ly, ph: rand(0, 2000), on: false });
+        }
+      }
+      const out = { swings: [], crates: [] };
+      if (Math.random() < 0.3) {
+        out.swings.push({
+          ax: rand(W * 0.25, W * 0.75), ay: rand(30, 110),
+          L: rand(230, 360), amp: rand(0.35, 0.6), w: 150, ph: rand(0, 6.28),
         });
-        fx.setUserData(q.solid ? { world: true } : { world: true, oneway: true, top: q.y });
-        this.platBodies.push(b);
       }
-      // points d'apparition répartis sur les plateformes
-      this.spawns = [];
-      for (const q of this.plats) {
-        this.spawns.push({ x: q.x + q.w * 0.5, y: q.y });
-        if (q.w > 300) {
-          this.spawns.push({ x: q.x + q.w * 0.2, y: q.y });
-          this.spawns.push({ x: q.x + q.w * 0.8, y: q.y });
-        }
+      const grounds = this.plats.filter((q) => q.y === gy && q.w > 250);
+      const nc = Math.floor(rand(0, 3));
+      for (let i = 0; i < nc && grounds.length; i++) {
+        const q = grounds[Math.floor(Math.random() * grounds.length)];
+        out.crates.push({
+          x: rand(q.x + 40, q.x + q.w - 40),
+          y: q.y - C.CRATE_S / 2 - 2,
+        });
       }
+      return out;
     }
 
     startRound() {
@@ -527,6 +867,8 @@
       this._tickWeapons(dtMs);
       this._tickBullets(dtMs);
       this._tickDrops(dtMs);
+      this._tickHazards(dtMs);
+      this._tickMapObjects(dtMs);
       for (let i = this.booms.length - 1; i >= 0; i--) {
         if ((this.booms[i].t -= dtMs) <= 0) this.booms.splice(i, 1);
       }
@@ -584,6 +926,25 @@
       // on regarde vers la souris, pas vers où l'on court (façon Stick Fight)
       p.facing = Math.cos(p.aim) >= 0 ? 1 : -1;
       p.stagger = Math.max(0, p.stagger - dtMs);
+
+      // charge du Kaméaméa : on cumule la rotation de la visée tant qu'elle
+      // tourne dans le même sens ; un tour complet à mains nues charge le
+      // poing, une pause ou un demi-tour inverse remet le compteur à zéro
+      const da = norm(p.aim - p._pa);
+      p._pa = p.aim;
+      if (Math.abs(da) > 0.03) {
+        p.spinIdle = 0;
+        if (p.spin !== 0 && Math.sign(da) !== Math.sign(p.spin)) p.spin = 0;
+        p.spin += da;
+        if (Math.abs(p.spin) >= C.KAME_SPIN) {
+          p.spin = 0;
+          if (!p.weapon) p.kame = C.KAME_MS;
+        }
+      } else {
+        p.spinIdle += dtMs;
+        if (p.spinIdle > C.KAME_IDLE_MS) p.spin = 0;
+      }
+      p.kame = Math.max(0, p.kame - dtMs);
       p.onGround = this._grounded(p, vyPx);
 
       // bouclier levé (clic droit) : il s'use tant qu'il est tenu ; sinon
@@ -621,13 +982,17 @@
       // n'est pas sonné ; la projection d'un coup reste donc physique
       let vx = vxPx, vy = vyPx;
       const target = dir * C.MOVE;
-      const acc = (p.onGround ? C.ACCEL : C.AIR_ACCEL) * dt;
+      // sur la glace : presque pas d'accroche, on glisse comme une savonnette
+      const onIce = p.onGround && this.plats.some((q) => q.ice && !q.off &&
+        p.x > q.x - 6 && p.x < q.x + q.w + 6 && Math.abs(p.y - q.y) < 12);
+      const acc = (p.onGround ? C.ACCEL : C.AIR_ACCEL) * dt *
+        (onIce ? C.ICE_ACCEL_MUL : 1);
       if (p.stagger <= 0) {
         if (dir !== 0) {
           if (vx < target) vx = Math.min(target, vx + acc);
           else vx = Math.max(target, vx - acc);
         } else if (p.onGround) {
-          const f = C.FRICTION * dt;
+          const f = C.FRICTION * dt * (onIce ? C.ICE_FRICTION_MUL : 1);
           vx = Math.abs(vx) <= f ? 0 : vx - Math.sign(vx) * f;
         }
       }
@@ -774,10 +1139,24 @@
         }
         if (!dmg) continue;
         p.hitIds.add(e.id);
+        // poing Kaméaméa : dégâts boostés, la victime décolle à la verticale
+        const kame = !p.weapon && p.kame > 0;
+        if (kame) {
+          p.kame = 0;
+          dmg = Math.round(dmg * C.KAME_DMG_MUL);
+        }
         this._damage(e, dmg);
         e.ht = C.HIT_FLASH_MS * (crit ? 1.8 : 1);
         e.htCrit = crit;
         e.stagger = 320;
+        if (kame) {
+          e.stagger = 650;
+          const tb2 = e.ragdoll.torso;
+          tb2.setLinearVelocity(new pl.Vec2(0, -C.KAME_UP / S));
+          tb2.setAngularVelocity(p.facing * 9);
+          if (e.hp <= 0) { e.hp = 0; this._die(e); }
+          continue;
+        }
         // projection dans la direction du coup, amplifiée par les dégâts
         // subis (façon Smash), avec une rotation pour l'effet chiffon
         const scale = (0.7 + ((C.HP - Math.max(0, e.hp)) / C.HP) * 1.4) *
@@ -846,13 +1225,33 @@
           hp: p.hp, sh: Math.round(p.sh), bl: p.blocking ? 1 : 0,
           d: p.dead ? 1 : 0, s: p.score,
           w: p.weapon || 0, mn: p.ammo, mu: p.mu > 0 ? 1 : 0,
+          k: p.kame > 0 ? 1 : 0,
           ht: p.ht > 0 ? (p.htCrit ? 2 : 1) : 0,
           b: this.viewPlayer(p),
         })),
         wp: this.viewWeapons(),
         bu: this.viewBullets(),
         bx: this.viewBooms(),
-        plats: this.plats.map((q) => [q.x | 0, q.y | 0, q.w | 0, q.h, q.solid ? 1 : 0]),
+        th: this.theme,
+        hz: this.hazards.map((h) => [h.x | 0, h.y | 0, h.w | 0, h.h | 0]),
+        lv: this.lava ? Math.round(this.lava.y) : -1,
+        sb: this.balls.map((b) => [b.ax | 0, b.ay | 0,
+          Math.round(b.x), Math.round(b.y), b.r]),
+        ls: this.lasers.map((l) => [l.x1 | 0, l.y1 | 0, l.x2 | 0, l.y2 | 0,
+          l.on ? 1 : 0]),
+        sw: this.swings.map((s) => {
+          const q = s.body.getPosition();
+          return [s.ax | 0, s.ay | 0, Math.round(q.x * S), Math.round(q.y * S),
+            r2(s.body.getAngle()), s.w];
+        }),
+        cr: this.crates.map((c) => {
+          const q = c.body.getPosition();
+          return [Math.round(q.x * S), Math.round(q.y * S),
+            r2(c.body.getAngle()), c.s];
+        }),
+        plats: this.plats.map((q) => [q.x | 0, q.y | 0, q.w | 0, q.h, q.solid ? 1 : 0,
+          q.off ? 0 : 1, q.timer > 0 && !q.off ? 1 : 0,
+          q.ice ? (q.iceHp < C.ICE_HP * 0.55 ? 2 : 1) : 0]),
         round: {
           n: this.round.n, ph: this.round.phase,
           tm: Math.max(0, Math.ceil(this.round.timer)), w: this.round.winner,

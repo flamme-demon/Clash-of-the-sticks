@@ -51,7 +51,7 @@
     throw: ['f', 'c'],
   };
   window.addEventListener('keydown', (e) => {
-    if (!running) return;
+    if (!running || (window.Editor && Editor.active)) return;
     const k = e.key.toLowerCase();
     if (KEYS.left.includes(k)) input.left = true;
     else if (KEYS.right.includes(k)) input.right = true;
@@ -72,7 +72,7 @@
     input.mouseX = e.clientX; input.mouseY = e.clientY;
   });
   canvas.addEventListener('mousedown', (e) => {
-    if (!running) return;
+    if (!running || (window.Editor && Editor.active)) return;
     if (e.button === 2) input.block = true;   // clic droit maintenu : bouclier
     else { input.attack = true; input.attackHeld = true; }
   });
@@ -209,6 +209,13 @@
     if (dtMs <= 0) return;
     lastStep = now;
     if (mode === 'host') {
+      // en mode édition la partie est figée, mais on continue d'émettre :
+      // les invités voient la map se construire en direct
+      if (window.Editor && Editor.active) {
+        accumulator = 0;
+        if (hostNet) hostNet.broadcast();
+        return;
+      }
       accumulator += dtMs;
       let guard = 0;
       while (accumulator >= C.TICK_MS && guard++ < 40) {
@@ -249,13 +256,29 @@
           hp: p.hp, sh: p.sh, bl: p.blocking ? 1 : 0,
           d: p.dead ? 1 : 0, s: p.score,
           w: p.weapon || 0, mn: p.ammo, mu: p.mu > 0 ? 1 : 0,
+          k: p.kame > 0 ? 1 : 0,
           ht: p.ht > 0 ? (p.htCrit ? 2 : 1) : 0,
           b: world.viewPlayer(p),
         })),
         weapons: world.viewWeapons(),
         bullets: world.viewBullets(),
         booms: world.viewBooms(),
-        plats: world.plats.map((pl) => [pl.x, pl.y, pl.w, pl.h, pl.solid ? 1 : 0]),
+        theme: world.theme,
+        hazards: world.hazards.map((h) => [h.x, h.y, h.w, h.h]),
+        lava: world.lava ? world.lava.y : -1,
+        balls: world.balls.map((b) => [b.ax, b.ay, b.x, b.y, b.r]),
+        lasers: world.lasers.map((l) => [l.x1, l.y1, l.x2, l.y2, l.on ? 1 : 0]),
+        swings: world.swings.map((s) => {
+          const q = s.body.getPosition();
+          return [s.ax, s.ay, q.x * C.SCALE, q.y * C.SCALE, s.body.getAngle(), s.w];
+        }),
+        crates: world.crates.map((c) => {
+          const q = c.body.getPosition();
+          return [q.x * C.SCALE, q.y * C.SCALE, c.body.getAngle(), c.s];
+        }),
+        plats: world.plats.map((pl) => [pl.x, pl.y, pl.w, pl.h, pl.solid ? 1 : 0,
+          pl.off ? 0 : 1, pl.timer > 0 && !pl.off ? 1 : 0,
+          pl.ice ? (pl.iceHp < C.ICE_HP * 0.55 ? 2 : 1) : 0]),
         round: {
           n: world.round.n, ph: world.round.phase,
           tm: world.round.timer, w: world.round.winner,
@@ -267,6 +290,7 @@
     }
 
     renderer.draw(view, myId, dt);
+    if (window.Editor && Editor.active) Editor.drawOverlay();
 
     if (now - sbTimer > 400) {
       sbTimer = now;
@@ -347,6 +371,13 @@
       weapons: snap.wp,
       bullets: snap.bu,
       booms: snap.bx,
+      theme: snap.th,
+      hazards: snap.hz,
+      lava: snap.lv,
+      balls: snap.sb,
+      lasers: snap.ls,
+      swings: snap.sw,
+      crates: snap.cr,
       plats: snap.plats,
       round: snap.round,
       waiting: snap.players.length < 2,
@@ -422,6 +453,12 @@
 
   window.addEventListener('keydown', (e) => {
     if (e.key.toLowerCase() === 't' && running && !e.repeat) toggleTune();
+    // éditeur de map (hôte seulement) : M ouvre / ferme ; à la fermeture,
+    // une manche redémarre sur la map éditée
+    if (e.key.toLowerCase() === 'm' && running && !e.repeat &&
+        mode === 'host' && window.Editor) {
+      Editor.toggle(world, renderer, canvas, () => world.startRound());
+    }
   });
 
   showMenu('');

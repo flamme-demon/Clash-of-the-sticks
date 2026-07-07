@@ -24,10 +24,11 @@
     function draw(view, myId, dt) {
       const cw = canvas.width, ch = canvas.height;
 
-      // fond : dégradé nocturne + vignette
+      // fond : dégradé aux couleurs du thème de la carte
+      const theme = C.THEMES[view.theme || 0] || C.THEMES[0];
       const g = ctx.createLinearGradient(0, 0, 0, ch);
-      g.addColorStop(0, '#171b26');
-      g.addColorStop(1, '#0e1017');
+      g.addColorStop(0, theme.bg[0]);
+      g.addColorStop(1, theme.bg[1]);
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, cw, ch);
 
@@ -35,7 +36,12 @@
       ctx.translate(ox, oy);
       ctx.scale(scale, scale);
 
-      drawPlats(view.plats);
+      drawPlats(view.plats, theme);
+      drawSpikes(view.hazards);
+      drawSwings(view.swings, theme);
+      drawCrates(view.crates);
+      drawLasers(view.lasers);
+      drawBalls(view.balls);
 
       // armes libres (lancées, lâchées ou larguées du ciel)
       ctx.lineCap = 'round';
@@ -73,21 +79,180 @@
       for (const p of view.players) if (p.d) drawStickman(p, p.id === myId);
       for (const p of view.players) if (!p.d) drawStickman(p, p.id === myId);
 
+      // lave par-dessus tout : les joueurs qui y tombent s'y enfoncent
+      if (view.lava >= 0) drawLava(view.lava);
+
       ctx.restore();
 
       drawBanners(view, myId, cw, ch);
     }
 
-    function drawPlats(plats) {
+    function drawPlats(plats, theme) {
       for (const pl of plats) {
-        const [x, y, w, h, solid] = pl;
-        ctx.fillStyle = solid ? '#2c3446' : '#3a4258';
-        roundRect(x, y, w, h, 8);
+        const [x0, y, w, h, , on, shake, ice] = pl;
+        // bloc disparu (clignotant éteint, effondré ou glace brisée) :
+        // simple fantôme en pointillés
+        if (on === 0) {
+          ctx.globalAlpha = 0.10;
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 2;
+          roundRect(x0, y, w, h, 8);
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+          continue;
+        }
+        // bloc friable en train de céder : il tremble
+        const x = shake ? x0 + (Math.random() - 0.5) * 7 : x0;
+        if (ice) {
+          ctx.fillStyle = 'rgba(160,215,240,0.75)';
+          roundRect(x, y, w, h, 8);
+          ctx.fill();
+          ctx.fillStyle = 'rgba(230,248,255,0.9)';
+          roundRect(x, y, w, 6, 3);
+          ctx.fill();
+          if (ice === 2) {   // fissures : la glace a bien morflé
+            ctx.strokeStyle = 'rgba(30,80,110,0.6)';
+            ctx.lineWidth = 2;
+            for (let i = 1; i <= 3; i++) {
+              const fx = x + (w * i) / 4;
+              line(fx, y + 3, fx - 14, y + h * 0.5);
+              line(fx - 14, y + h * 0.5, fx + 6, y + h - 4);
+            }
+          }
+        } else {
+          ctx.fillStyle = theme.plat;
+          roundRect(x, y, w, h, 8);
+          ctx.fill();
+          ctx.fillStyle = theme.top;
+          roundRect(x, y, w, 6, 3);
+          ctx.fill();
+        }
+      }
+    }
+
+    // boule piquante : chaîne à maillons + boule hérissée
+    function drawBalls(balls) {
+      for (const b of balls || []) {
+        const [ax, ay, x, y, r] = b;
+        ctx.strokeStyle = '#6b7383';
+        ctx.lineWidth = 4;
+        ctx.setLineDash([9, 7]);
+        line(ax, ay, x, y);
+        ctx.setLineDash([]);
+        ctx.strokeStyle = '#9aa3b5';
+        ctx.lineWidth = 4;
+        for (let i = 0; i < 8; i++) {
+          const a = (i / 8) * Math.PI * 2;
+          line(x + Math.cos(a) * r * 0.7, y + Math.sin(a) * r * 0.7,
+            x + Math.cos(a) * (r + 8), y + Math.sin(a) * (r + 8));
+        }
+        ctx.fillStyle = '#3d4354';
+        ctx.beginPath(); ctx.arc(x, y, r * 0.85, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+
+    // laser : émetteurs toujours visibles, rayon brûlant quand il est allumé
+    function drawLasers(lasers) {
+      for (const l of lasers || []) {
+        const [x1, y1, x2, y2, on] = l;
+        ctx.fillStyle = '#3d4354';
+        ctx.fillRect(x1 - 7, y1 - 7, 14, 14);
+        ctx.fillRect(x2 - 7, y2 - 7, 14, 14);
+        if (on) {
+          ctx.strokeStyle = 'rgba(255,60,60,0.30)';
+          ctx.lineWidth = 11;
+          line(x1, y1, x2, y2);
+          ctx.strokeStyle = '#ff4d4d';
+          ctx.lineWidth = 3.5;
+          line(x1, y1, x2, y2);
+        } else {
+          ctx.strokeStyle = 'rgba(255,80,80,0.10)';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([4, 12]);
+          line(x1, y1, x2, y2);
+          ctx.setLineDash([]);
+        }
+      }
+    }
+
+    // balançoire : deux cordes vers l'ancre + planche inclinée
+    function drawSwings(swings, theme) {
+      for (const s of swings || []) {
+        const [ax, ay, x, y, ang, w] = s;
+        ctx.strokeStyle = '#6b7383';
+        ctx.lineWidth = 3;
+        const c = Math.cos(ang), sn = Math.sin(ang);
+        line(ax, ay, x - c * w * 0.45, y - sn * w * 0.45);
+        line(ax, ay, x + c * w * 0.45, y + sn * w * 0.45);
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(ang);
+        ctx.fillStyle = theme.plat;
+        roundRect(-w / 2, -7, w, 14, 5);
         ctx.fill();
-        ctx.fillStyle = solid ? '#48546e' : '#5a6580';
-        roundRect(x, y, w, 6, 3);
+        ctx.fillStyle = theme.top;
+        roundRect(-w / 2, -7, w, 5, 3);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    // caisse en bois poussable
+    function drawCrates(crates) {
+      for (const cr of crates || []) {
+        const [x, y, ang, s] = cr;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(ang);
+        ctx.fillStyle = '#8a6b3f';
+        roundRect(-s / 2, -s / 2, s, s, 4);
+        ctx.fill();
+        ctx.strokeStyle = '#5f4728';
+        ctx.lineWidth = 3;
+        roundRect(-s / 2 + 3, -s / 2 + 3, s - 6, s - 6, 3);
+        ctx.stroke();
+        line(-s / 2 + 3, -s / 2 + 3, s / 2 - 3, s / 2 - 3);
+        line(-s / 2 + 3, s / 2 - 3, s / 2 - 3, -s / 2 + 3);
+        ctx.restore();
+      }
+    }
+
+    // pics : rangée de triangles pointes en haut
+    function drawSpikes(hazards) {
+      for (const h of hazards || []) {
+        const [x, y, w, hh] = h;
+        ctx.fillStyle = '#9aa3b5';
+        ctx.beginPath();
+        for (let sx = x; sx < x + w - 1; sx += 16) {
+          const tw = Math.min(16, x + w - sx);
+          ctx.moveTo(sx, y + hh);
+          ctx.lineTo(sx + tw / 2, y);
+          ctx.lineTo(sx + tw, y + hh);
+        }
         ctx.fill();
       }
+    }
+
+    // lave : nappe orange à surface ondulante et lueur
+    function drawLava(ly) {
+      const t = performance.now() / 400;
+      const bottom = C.WORLD.H + 200;
+      ctx.beginPath();
+      ctx.moveTo(-100, bottom);
+      for (let x = -100; x <= C.WORLD.W + 100; x += 40) {
+        ctx.lineTo(x, ly + Math.sin(t + x * 0.02) * 6);
+      }
+      ctx.lineTo(C.WORLD.W + 100, bottom);
+      ctx.closePath();
+      const g = ctx.createLinearGradient(0, ly, 0, bottom);
+      g.addColorStop(0, '#ff8a3c');
+      g.addColorStop(0.25, '#e0491f');
+      g.addColorStop(1, '#7a1a0a');
+      ctx.fillStyle = g;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,220,120,0.85)';
+      ctx.lineWidth = 4;
+      ctx.stroke();
     }
 
     function roundRect(x, y, w, h, r) {
@@ -140,6 +305,17 @@
           }
         }
       };
+      // aura dorée pulsante : poing Kaméaméa chargé
+      if (p.k && !p.d) {
+        const pulse = 0.75 + 0.25 * Math.sin(performance.now() / 90);
+        ctx.beginPath();
+        ctx.arc(tx, ty - 5, 34 + pulse * 6, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,209,102,0.14)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,209,102,' + (0.55 * pulse + 0.25) + ')';
+        ctx.lineWidth = 4;
+        ctx.stroke();
+      }
       // bulle de bouclier (clic droit maintenu)
       if (p.bl && !p.d) {
         ctx.beginPath();
@@ -333,7 +509,12 @@
       };
     }
 
-    return { draw, resize, worldFromScreen };
+    // transformation monde -> écran (pour l'éditeur qui dessine par-dessus)
+    function getTransform() {
+      return { scale, ox, oy, ctx };
+    }
+
+    return { draw, resize, worldFromScreen, getTransform };
   }
 
   global.Render = { createRenderer };
