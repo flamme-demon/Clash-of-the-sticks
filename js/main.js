@@ -283,7 +283,8 @@
           n: world.round.n, ph: world.round.phase,
           tm: world.round.timer, w: world.round.winner,
         },
-        waiting: world.players.size < 2,
+        // pas de bandeau d'attente pendant qu'on construit sa map
+        waiting: world.players.size < 2 && !(window.Editor && Editor.active),
       };
     } else {
       view = buildRemoteView(dt);
@@ -451,12 +452,18 @@
     });
   }
 
+  // T (réglage physique) et M (éditeur de map) : hôte seul dans la partie
+  // uniquement — pas question de figer ou trafiquer une baston en cours
+  function soloHost() {
+    return mode === 'host' && world && world.players.size === 1;
+  }
   window.addEventListener('keydown', (e) => {
-    if (e.key.toLowerCase() === 't' && running && !e.repeat) toggleTune();
-    // éditeur de map (hôte seulement) : M ouvre / ferme ; à la fermeture,
-    // une manche redémarre sur la map éditée
-    if (e.key.toLowerCase() === 'm' && running && !e.repeat &&
-        mode === 'host' && window.Editor) {
+    if (e.key.toLowerCase() === 't' && running && !e.repeat && soloHost()) toggleTune();
+    // M ouvre / ferme l'éditeur ; à la fermeture, une manche redémarre sur
+    // la map éditée. On peut toujours FERMER l'éditeur, même si un copain
+    // vient d'arriver entre-temps.
+    if (e.key.toLowerCase() === 'm' && running && !e.repeat && window.Editor &&
+        (Editor.active || soloHost())) {
       Editor.toggle(world, renderer, canvas, () => world.startRound());
     }
   });
