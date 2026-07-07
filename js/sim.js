@@ -13,7 +13,7 @@
     (typeof require === 'function' ? require('./vendor/planck.min.js') : null);
   const S = C.SCALE;                              // pixels par mètre physique
   const V = (x, y) => new pl.Vec2(x / S, y / S);  // px -> monde physique
-  const CAT = { WORLD: 1, BODY: 2, LIMB: 4 };
+  const CAT = { WORLD: 1, BODY: 2, LIMB: 4, DEBRIS: 8 };
 
   function rand(a, b) { return a + Math.random() * (b - a); }
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
@@ -47,7 +47,9 @@
       this.swings = [];           // balançoires {ax,ay,L,amp,om,ph,w,body}
       this.crates = [];           // caisses poussables {body,s}
       this.mapBodies = [];        // corps Planck des objets (détruits au reset)
+      this.iceChunks = [];        // éclats de glace en vol / posés {body,s,t}
       this.customMap = null;      // map de l'éditeur ; null = cartes aléatoires
+      this.mapDrops = true;       // les armes tombent-elles du ciel ?
       this._wid = 0;
       this.bullets = [];          // balles en vol
       this.booms = [];            // explosions en cours (effet + fenêtre rendu)
@@ -89,6 +91,7 @@
         ht: 0,                    // flash "touché"
         htCrit: false,            // le dernier coup reçu était un coup à la tête
         stagger: 0,               // équilibre affaibli juste après un coup reçu
+        limp: 0,                  // affalé au sol (écrasé par un bloc), gigote
         phase: 0,                 // phase de la démarche
         hitIds: new Set(),        // déjà touchés pendant ce coup
         weapon: 'baton',          // type d'arme tenue, null = poings et pieds
@@ -101,7 +104,7 @@
         combo: 0,                 // alterne poing / pied à mains nues
         ragdoll: null,
         input: {
-          left: false, right: false, jump: false,
+          left: false, right: false, jump: false, down: false,
           attack: false, attackHeld: false, throw: false, block: false,
         },
       };
@@ -123,6 +126,7 @@
       if (!p) return;
       p.input.left = !!msg.l;
       p.input.right = !!msg.r;
+      p.input.down = !!msg.dn;
       p.input.block = !!msg.bl;
       p.input.attackHeld = !!msg.ah;
       if (typeof msg.m === 'number' && isFinite(msg.m)) p.aim = msg.m;
@@ -133,16 +137,21 @@
       if (msg.tr) p.input.throw = true;
     }
 
-    spawn(p) {
-      const s = this.spawns[Math.floor(Math.random() * this.spawns.length)];
+    spawn(p, slot) {
+      const s = slot || this.spawns[Math.floor(Math.random() * this.spawns.length)];
       this._destroyRagdoll(p);
       p.ragdoll = this._buildRagdoll(s.x, s.y);
       p.x = s.x; p.y = s.y;
       p.hp = C.HP; p.dead = false;
       p.sh = C.SHIELD; p.shT = 9999;
       p.atkT = -1; p.cd = 0; p.ht = 0; p.htCrit = false;
-      p.stagger = 0; p.phase = 0;
-      p.weapon = 'baton'; p.ammo = 0; p.mu = 0;
+      p.stagger = 0; p.limp = 0; p.phase = 0;
+      // arme de départ imposée par le point d'apparition (éditeur), sinon bâton
+      const wk = s && s.weapon;
+      if (wk === 'poings') { p.weapon = null; p.ammo = 0; }
+      else if (wk && C.WEAPONS[wk]) { p.weapon = wk; p.ammo = C.WEAPONS[wk].ammo || 0; }
+      else { p.weapon = 'baton'; p.ammo = 0; }
+      p.mu = 0;
       p.kame = 0; p.spin = 0; p.spinIdle = 0; p._pa = p.aim;
       p.jumps = 0; p.onGround = true;
     }
@@ -170,11 +179,13 @@
       const pw = this.pw;
       const r = {};
       r.torso = pw.createBody({
-        type: 'dynamic', position: V(x, y - 20), angularDamping: 1,
+        // amortissement angulaire modéré : un peu de ballant, mais il tient
+        type: 'dynamic', position: V(x, y - 20), angularDamping: 0.6,
       });
       r.torso.createFixture({
         shape: new pl.Box(13 / S, 20 / S), density: 1, friction: 0.05,
-        filterCategoryBits: CAT.BODY, filterMaskBits: CAT.WORLD,
+        // le torse heurte le décor ET les morceaux de glace (qui l'écrasent)
+        filterCategoryBits: CAT.BODY, filterMaskBits: CAT.WORLD | CAT.DEBRIS,
       });
       r.torso.setUserData({ foot: 20 });
 
@@ -286,6 +297,7 @@
 
     // largage : une arme aléatoire tombe du ciel en cours de manche
     _tickDrops(dtMs) {
+      if (!this.mapDrops) return;   // largages désactivés pour cette map
       if (this.players.size < 2 || this.round.phase !== 'play') return;
       this.dropT -= dtMs;
       if (this.dropT > 0) return;
@@ -381,13 +393,14 @@
             p.ragdoll.torso.setLinearVelocity(new pl.Vec2(tv.x, -C.LAVA_KNOCK / S));
           }
         } else if (p.hzCd <= 0) {
-          // pics : gros coup sec + projection, puis brève invulnérabilité
+          // pics : mort instantanée au contact (bouclier inutile), le
+          // pantin est projeté vers le haut au moment d'être empalé
           for (const h of this.hazards) {
             if (p.x < h.x - 6 || p.x > h.x + h.w + 6 ||
                 p.y < h.y - 2 || p.y > h.y + h.h + 24) continue;
             p.hzCd = C.HAZARD_CD_MS;
-            this._damage(p, C.SPIKE_DMG);
-            p.ht = C.HIT_FLASH_MS; p.htCrit = false;
+            p.hp = 0;
+            p.ht = C.HIT_FLASH_MS * 1.8; p.htCrit = true;
             p.stagger = 300;
             const tv = p.ragdoll.torso.getLinearVelocity();
             p.ragdoll.torso.setLinearVelocity(new pl.Vec2(tv.x, -700 / S));
@@ -404,7 +417,8 @@
       this.mapT += dtMs;
       const t = this.mapT / 1000;
 
-      // boules piquantes : pendule, dégâts au contact + grosse projection
+      // boules piquantes : pendule, mort instantanée au contact + grosse
+      // projection (le bouclier ne protège pas d'un pieu en pleine face)
       for (const b of this.balls) {
         const th = b.amp * Math.sin(b.om * t + b.ph);
         b.x = b.ax + Math.sin(th) * b.L;
@@ -415,13 +429,13 @@
           const d = Math.hypot(b.x - p.x, b.y - cy);
           if (d > b.r + 22) continue;
           p.hzCd = C.HAZARD_CD_MS;
-          this._damage(p, C.BALL_DMG);
-          p.ht = C.HIT_FLASH_MS; p.htCrit = false;
+          p.hp = 0;
+          p.ht = C.HIT_FLASH_MS * 1.8; p.htCrit = true;
           p.stagger = 400;
           const nx = (p.x - b.x) / (d || 1), ny = (cy - b.y) / (d || 1);
           p.ragdoll.torso.setLinearVelocity(new pl.Vec2(
             nx * C.BALL_KNOCK / S, (ny * C.BALL_KNOCK - 250) / S));
-          if (p.hp <= 0) { p.hp = 0; this._die(p); }
+          this._die(p);
         }
       }
 
@@ -485,12 +499,126 @@
       }
     }
 
-    // glace touchée par une balle ou une explosion : elle se fissure puis vole
-    // en éclats (le bloc disparaît pour la manche)
-    _damageIce(q, dmg) {
-      if (!q.ice || q.off) return;
-      q.iceHp -= dmg;
-      if (q.iceHp <= 0) { q.off = true; q.body.setActive(false); }
+    // vrai (bloc de glace) tuile encore présente au-dessus de x
+    _iceSolidAt(q, x) {
+      return q.tiles && q.tiles.some((t) => t.alive && Math.abs(t.cx - x) <= t.tw / 2 + 2);
+    }
+
+    // détache une tuile de la plateforme de glace : la fixture disparaît (le
+    // reste du bloc tient toujours) et le morceau tombe en débris physique
+    _breakIceTile(q, t) {
+      if (!t.alive) return;
+      t.alive = false;
+      q.body.destroyFixture(t.fx);
+      // le morceau naît juste SOUS la plateforme : il tombe librement sans se
+      // coincer contre les tuiles voisines encore en place. Grand éclat (toute
+      // la largeur de la tuile, presque toute la hauteur du bloc)
+      const ch = Math.min(q.h, 62), cw = t.tw + 6;
+      this._spawnIceChunk(t.cx, q.y + q.h + ch / 2 + 1,
+        rand(-25, 25), rand(40, 120), cw, ch);
+      // + quelques petits bouts qui se détachent et s'éparpillent
+      const bits = 1 + (Math.random() < 0.5 ? 1 : 0);
+      for (let k = 0; k < bits; k++) {
+        const bs = rand(9, 17);
+        this._spawnIceChunk(t.cx + rand(-t.tw * 0.35, t.tw * 0.35),
+          q.y + q.h + bs / 2 + 1, rand(-90, 90), rand(20, 110), bs, bs);
+      }
+      if (q.tiles.every((u) => !u.alive)) q.off = true;   // plus rien : trou total
+    }
+
+    // glace touchée par une balle ou une explosion : les tuiles proches de
+    // l'impact se détachent (plus de tuiles quand les dégâts sont élevés)
+    _damageIce(q, dmg, hx, hy) {
+      if (!q.ice || q.off || !q.tiles) return;
+      const x = hx !== undefined ? hx : q.x + q.w / 2;
+      const nbreak = Math.max(1, Math.round(dmg / 20));
+      const alive = q.tiles.filter((t) => t.alive)
+        .sort((a, b) => Math.abs(a.cx - x) - Math.abs(b.cx - x));
+      for (let i = 0; i < nbreak && i < alive.length; i++) this._breakIceTile(q, alive[i]);
+    }
+
+    // un morceau de glace tombé de la plateforme : corps dynamique qui heurte
+    // le décor et les autres morceaux, mais traverse les joueurs (ses dégâts
+    // de chute sont gérés à la main)
+    _spawnIceChunk(x, y, vx, vy, w, h) {
+      if (this.iceChunks.length >= C.ICE_CHUNK_MAX) {
+        this.pw.destroyBody(this.iceChunks.shift().body);
+      }
+      const cw = w || C.ICE_TILE, ch = h || C.ICE_TILE;
+      // esquille de glace anguleuse (façon jeu d'origine) : peu de sommets et
+      // un rayon très bruité => des pointes et des faces franches, pas un galet
+      const n = 4 + Math.floor(Math.random() * 3);   // 4 à 6 sommets
+      const verts = [];
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + rand(-0.35, 0.35);
+        const rx = (cw / 2) * (0.5 + Math.random() * 0.5);
+        const ry = (ch / 2) * (0.5 + Math.random() * 0.5);
+        verts.push([Math.round(Math.cos(a) * rx), Math.round(Math.sin(a) * ry)]);
+      }
+      const b = this.pw.createBody({
+        type: 'dynamic', position: V(x, y), angle: rand(-0.6, 0.6),
+      });
+      b.createFixture({
+        // Planck calcule l'enveloppe convexe des sommets fournis
+        shape: new pl.Polygon(verts.map((v) => new pl.Vec2(v[0] / S, v[1] / S))),
+        density: 0.6, friction: 0.6, restitution: 0.08,
+        // heurte le décor, les autres morceaux ET le torse des joueurs (écrase)
+        filterCategoryBits: CAT.DEBRIS,
+        filterMaskBits: CAT.WORLD | CAT.DEBRIS | CAT.BODY,
+      });
+      b.setLinearVelocity(new pl.Vec2(vx / S, vy / S));
+      b.setAngularVelocity(rand(-6, 6));   // il tournoie en tombant
+      // vy0 = vitesse de chute d'approche (avant que le choc ne la freine),
+      // utilisée pour les dégâts ; hit = joueurs déjà écrasés par ce morceau
+      this.iceChunks.push({ body: b, w: cw, h: ch, verts, t: 0, vy0: vy, hit: new Set() });
+    }
+
+    // chute des morceaux : ceux qui tombent vite écrasent le joueur touché,
+    // l'enfoncent au sol, puis retombent physiquement dessus/à côté (ils ne
+    // sont PAS absorbés) ; les autres se posent et restent sur les plateformes
+    _tickIceChunks(dtMs) {
+      for (let i = this.iceChunks.length - 1; i >= 0; i--) {
+        const c = this.iceChunks[i];
+        c.t += dtMs;
+        const q = c.body.getPosition();
+        const cx = q.x * S, cy = q.y * S;
+        if (cy > C.WORLD.H + C.KILL_Y * 2 ||
+            cx < -C.KILL_X * 2 || cx > C.WORLD.W + C.KILL_X * 2) {
+          this.pw.destroyBody(c.body);
+          this.iceChunks.splice(i, 1);
+          continue;
+        }
+        const vyNow = c.body.getLinearVelocity().y * S;
+        // vy0 = vitesse d'approche du tick précédent : le choc physique freine
+        // le morceau avant qu'on le lise, donc on se sert de la vitesse d'avant
+        const vy = c.vy0;
+        if (vy >= C.ICE_FALL_MIN_VY) {
+          for (const p of this.players.values()) {
+            if (p.dead || !p.ragdoll || c.hit.has(p.id)) continue;
+            // le morceau survole le joueur et arrive sur la hauteur de son
+            // corps (jusqu'au-dessus de la tête : un bloc sur le crâne compte)
+            if (Math.abs(cx - p.x) > c.w / 2 + C.PLAYER.W / 2 + 6) continue;
+            if (cy < p.y - C.PLAYER.H - 16 || cy > p.y - 4) continue;
+            c.hit.add(p.id);
+            const dmg = clamp(Math.round((vy - C.ICE_FALL_MIN_VY) / 45) + 4,
+              4, C.ICE_FALL_DMG_MAX);
+            this._damage(p, dmg);
+            p.ht = C.HIT_FLASH_MS; p.htCrit = false;
+            // écrasé : enfoncé au sol (≥ 90 % de la vitesse de chute), puis
+            // affalé mou sous le bloc — il faut gigoter pour s'en extraire
+            p.stagger = Math.max(p.stagger, 200);
+            p.limp = C.CRUSH_LIMP_MS;
+            const tv = p.ragdoll.torso.getLinearVelocity();
+            p.ragdoll.torso.setLinearVelocity(new pl.Vec2(
+              tv.x * 0.35, Math.max(tv.y * S, vy * 0.9 + 400) / S));
+            // coup de rotation pour amorcer l'affalement à plat
+            p.ragdoll.torso.setAngularVelocity(p.facing * 8);
+            if (p.hp <= 0) { p.hp = 0; this._die(p); }
+            break;
+          }
+        }
+        c.vy0 = vyNow;   // mémorise pour le tick suivant
+      }
     }
 
     // ---------- balles ----------
@@ -508,11 +636,19 @@
           g: W.grav || 0, expl: W.expl || 0,
         });
       }
-      // recul
+      // recul : forte poussée à l'opposé de la visée (les grosses armes te
+      // projettent). Verticalement à 0,8 : viser le sol te fait décoller.
+      // Les grosses armes ajoutent un pop vers le haut : on quitte le sol et
+      // on file en l'air (sans friction) — beaucoup plus difficile à contrer.
+      const pop = W.recul >= 400 ? 300 : 0;
       const tv = p.ragdoll.torso.getLinearVelocity();
       p.ragdoll.torso.setLinearVelocity(new pl.Vec2(
         tv.x - Math.cos(p.aim) * W.recul / S,
-        tv.y - Math.sin(p.aim) * W.recul * 0.5 / S));
+        tv.y - (Math.sin(p.aim) * W.recul * 0.8 + pop) / S));
+      // au-delà d'un certain recul on est déséquilibré : on part en vrille et
+      // il faut se rattraper (façon éjection Stick Fight)
+      if (W.recul >= 800) p.stagger = Math.max(p.stagger, 300);
+      else if (W.recul >= 220) p.stagger = Math.max(p.stagger, 130);
       if (p.ammo <= 0) p.weapon = null;   // à sec : on jette, poings et pieds
     }
 
@@ -541,7 +677,7 @@
       for (const q of this.plats) {
         if (!q.ice || q.off) continue;
         const cx = clamp(x, q.x, q.x + q.w), cy2 = clamp(y, q.y, q.y + q.h);
-        if (Math.hypot(x - cx, y - cy2) < radius) this._damageIce(q, dmg);
+        if (Math.hypot(x - cx, y - cy2) < radius) this._damageIce(q, dmg, cx, cy2);
       }
     }
 
@@ -561,7 +697,9 @@
             if (q.off) continue;   // bloc disparu : les balles passent
             if ((nx > q.x && nx < q.x + q.w && ny > q.y && ny < q.y + q.h) ||
                 (mx > q.x && mx < q.x + q.w && my > q.y && my < q.y + q.h)) {
-              this._damageIce(q, b.dmg);
+              // glace trouée : si l'impact tombe dans un trou, la balle passe
+              if (q.ice && !this._iceSolidAt(q, nx)) continue;
+              this._damageIce(q, b.dmg, nx, ny);
               gone = true; break;
             }
           }
@@ -618,8 +756,14 @@
       const { W, H } = C.WORLD;
       for (const b of this.platBodies) this.pw.destroyBody(b);
       for (const b of this.mapBodies) this.pw.destroyBody(b);
+      for (const c of this.iceChunks) this.pw.destroyBody(c.body);
+      // armes libres au sol : on repart de zéro (évite les doublons quand
+      // l'éditeur ré-applique la map à chaque retouche)
+      for (const w of this.weapons.values()) this.pw.destroyBody(w.body);
+      this.weapons.clear();
       this.platBodies = [];
       this.mapBodies = [];
+      this.iceChunks = [];
       this.plats = [];
       this.hazards = [];
       this.lava = null;
@@ -629,25 +773,53 @@
       this.crates = [];
       this.mapT = 0;
 
-      let swingDefs, crateDefs, defSpawns = null;
+      let swingDefs, crateDefs, defSpawns = null, fixedW = [];
       if (this.customMap) {
         const r = this._loadDef(this.customMap);
-        swingDefs = r.swings; crateDefs = r.crates; defSpawns = r.spawns;
+        swingDefs = r.swings; crateDefs = r.crates;
+        defSpawns = r.spawns; fixedW = r.weapons;
+        this.mapDrops = this.customMap.drops !== false;   // largages (défaut oui)
       } else {
         const g = this._randomMap();
         swingDefs = g.swings; crateDefs = g.crates;
+        this.mapDrops = true;
       }
 
       // corps statiques Planck des plateformes
+      const mask = CAT.BODY | CAT.LIMB | CAT.DEBRIS;
       for (const q of this.plats) {
         const b = this.pw.createBody({ position: V(q.x + q.w / 2, q.y + q.h / 2) });
-        const fx = b.createFixture({
-          // la glace est physiquement glissante (presque aucune friction)
-          shape: new pl.Box(q.w / 2 / S, q.h / 2 / S),
-          friction: q.ice ? 0.01 : 0.6,
-          filterCategoryBits: CAT.WORLD, filterMaskBits: CAT.BODY | CAT.LIMB,
-        });
-        fx.setUserData(q.solid ? { world: true } : { world: true, oneway: true, top: q.y });
+        const cxB = q.x + q.w / 2;
+        if (q.ice) {
+          // glace fragmentée : une tuile = une fixture indépendante (on peut
+          // en détruire une seule et laisser le reste du bloc debout). Les
+          // tuiles ont des LARGEURS ALÉATOIRES => la casse est irrégulière
+          q.tiles = [];
+          let left = q.x;
+          while (left < q.x + q.w - 1) {
+            let tw = rand(C.ICE_TILE * 0.65, C.ICE_TILE * 1.35);
+            const rest = q.x + q.w - left;
+            // la dernière tuile absorbe le reste (pas de mini-tuile résiduelle)
+            if (rest - tw < C.ICE_TILE * 0.6) tw = rest;
+            tw = Math.min(tw, rest);
+            const cx = left + tw / 2;
+            const fx = b.createFixture({
+              shape: new pl.Box(tw / 2 / S, q.h / 2 / S, V(cx - cxB, 0)),
+              friction: 0.01,   // glissant
+              filterCategoryBits: CAT.WORLD, filterMaskBits: mask,
+            });
+            fx.setUserData({ world: true });
+            q.tiles.push({ x: left, cx, tw, alive: true, fx });
+            left += tw;
+          }
+        } else {
+          const fx = b.createFixture({
+            shape: new pl.Box(q.w / 2 / S, q.h / 2 / S),
+            friction: 0.6,
+            filterCategoryBits: CAT.WORLD, filterMaskBits: mask,
+          });
+          fx.setUserData(q.solid ? { world: true } : { world: true, oneway: true, top: q.y });
+        }
         q.body = b;
         this.platBodies.push(b);
       }
@@ -661,7 +833,8 @@
         sw.body = this.pw.createBody({ type: 'kinematic', position: V(sw.ax, sw.ay + sw.L) });
         sw.body.createFixture({
           shape: new pl.Box(sw.w / 2 / S, 7 / S), friction: 0.9,
-          filterCategoryBits: CAT.WORLD, filterMaskBits: CAT.BODY | CAT.LIMB,
+          filterCategoryBits: CAT.WORLD,
+          filterMaskBits: CAT.BODY | CAT.LIMB | CAT.DEBRIS,
         }).setUserData({ world: true });
         this.mapBodies.push(sw.body);
         this.swings.push(sw);
@@ -673,16 +846,24 @@
         body.createFixture({
           shape: new pl.Box(s / 2 / S, s / 2 / S), density: 0.4, friction: 0.5,
           filterCategoryBits: CAT.WORLD | CAT.BODY,
-          filterMaskBits: CAT.WORLD | CAT.BODY | CAT.LIMB,
+          filterMaskBits: CAT.WORLD | CAT.BODY | CAT.LIMB | CAT.DEBRIS,
         }).setUserData({ world: true });
         this.mapBodies.push(body);
         this.crates.push({ body, s });
       }
 
-      // points d'apparition : ceux de l'éditeur, sinon répartis sur les
-      // plateformes stables (jamais sur des pics)
+      // armes fixées à la main sur la carte (éditeur) : posées au sol dès le
+      // début de la manche, ramassables comme n'importe quelle arme libre
+      for (const fw of fixedW) {
+        if (fw.type && C.WEAPONS[fw.type]) {
+          this._spawnWeapon(fw.x, fw.y, 0, 0, 0, null, fw.type);
+        }
+      }
+
+      // points d'apparition : ceux de l'éditeur (avec arme éventuelle), sinon
+      // répartis sur les plateformes stables (jamais sur des pics)
       if (defSpawns && defSpawns.length) {
-        this.spawns = defSpawns.map((s) => ({ x: s.x, y: s.y }));
+        this.spawns = defSpawns.map((s) => ({ x: s.x, y: s.y, weapon: s.weapon }));
       } else {
         this.spawns = [];
         for (const q of this.plats) {
@@ -702,9 +883,10 @@
       }
     }
 
-    // charge une map de l'éditeur : { theme, plats:[{x,y,w,h,mode,ice}],
+    // charge une map de l'éditeur : { theme, drops, plats:[{x,y,w,h,mode,ice}],
     // spikes:[{x,y,w}], lava:{y,rise}, balls:[{ax,ay,L,amp}], lasers:[{x1..y2}],
-    // swings:[{ax,ay,L,amp,w}], crates:[{x,y}], spawns:[{x,y}] }
+    // swings:[{ax,ay,L,amp,w}], crates:[{x,y}], weapons:[{x,y,type}],
+    // spawns:[{x,y,weapon}] }
     _loadDef(d) {
       const { H } = C.WORLD;
       this.theme = Math.min(C.THEMES.length - 1, Math.max(0, d.theme | 0));
@@ -712,7 +894,7 @@
         this.plats.push({
           x: q.x, y: q.y, w: q.w, h: q.h, solid: true,
           mode: q.mode || null, ph: rand(0, 4000), timer: 0,
-          ice: !!q.ice, iceHp: C.ICE_HP,
+          ice: !!q.ice,
         });
       }
       for (const s of d.spikes || []) {
@@ -737,6 +919,7 @@
           amp: s.amp || 0.45, w: s.w || 150, ph: rand(0, 6.28) })),
         crates: d.crates || [],
         spawns: d.spawns || null,
+        weapons: d.weapons || [],
       };
     }
 
@@ -775,7 +958,7 @@
         const r = Math.random();
         if (r < 0.16) { q.mode = 'blink'; q.ph = rand(0, 4000); }
         else if (r < 0.30) { q.mode = 'crumble'; q.timer = 0; }
-        else if (r < 0.30 + C.ICE_CHANCE) { q.ice = true; q.iceHp = C.ICE_HP; }
+        else if (r < 0.30 + C.ICE_CHANCE) { q.ice = true; }
       }
       // thème visuel + dangers : pics sur certains blocs, lave en contrebas
       // (parfois montante — grimpez !)
@@ -851,8 +1034,8 @@
       const pool = this.spawns.slice().sort(() => Math.random() - 0.5);
       let i = 0;
       for (const p of this.players.values()) {
-        this.spawn(p);
         const s = pool[i++ % pool.length];
+        this.spawn(p, s);   // le spawn choisi impose aussi l'arme de départ
         this.teleport(p.id, s.x, s.y);
       }
     }
@@ -869,6 +1052,7 @@
       this._tickDrops(dtMs);
       this._tickHazards(dtMs);
       this._tickMapObjects(dtMs);
+      this._tickIceChunks(dtMs);
       for (let i = this.booms.length - 1; i >= 0; i--) {
         if ((this.booms[i].t -= dtMs) <= 0) this.booms.splice(i, 1);
       }
@@ -926,6 +1110,8 @@
       // on regarde vers la souris, pas vers où l'on court (façon Stick Fight)
       p.facing = Math.cos(p.aim) >= 0 ? 1 : -1;
       p.stagger = Math.max(0, p.stagger - dtMs);
+      // l'affalement (p.limp) ne se résorbe pas tout seul : il faut se débattre
+      // (géré plus bas selon les entrées)
 
       // charge du Kaméaméa : on cumule la rotation de la visée tant qu'elle
       // tourne dans le même sens ; un tour complet à mains nues charge le
@@ -985,13 +1171,27 @@
       // sur la glace : presque pas d'accroche, on glisse comme une savonnette
       const onIce = p.onGround && this.plats.some((q) => q.ice && !q.off &&
         p.x > q.x - 6 && p.x < q.x + q.w + 6 && Math.abs(p.y - q.y) < 12);
+      // couché : écrasé sous un bloc (limp, involontaire) ou volontairement
+      // allongé (touche bas, au sol). Dans les deux cas on rampe faiblement.
+      const limp = p.limp > 0;
+      // se débattre pour sortir de sous le bloc : gigoter gauche/droite ou
+      // marteler le saut résorbe vite l'affalement ; sinon il traîne longtemps
+      if (limp) {
+        const struggling = dir !== 0 || inp.jump;
+        inp.jump = false;   // le saut sert à se débattre, pas à sauter
+        p.limp = Math.max(0, p.limp - dtMs * (struggling ? 2.6 : 0.25));
+      }
+      const prone = !limp && !!inp.down && p.onGround && p.stagger <= 0;
+      const lie = limp || prone;
+      const ctrl = limp ? 0.4 : (prone ? 0.5 : 1);
       const acc = (p.onGround ? C.ACCEL : C.AIR_ACCEL) * dt *
-        (onIce ? C.ICE_ACCEL_MUL : 1);
+        (onIce ? C.ICE_ACCEL_MUL : 1) * ctrl;
+      const tgt = target * ctrl;
       if (p.stagger <= 0) {
         if (dir !== 0) {
-          if (vx < target) vx = Math.min(target, vx + acc);
-          else vx = Math.max(target, vx - acc);
-        } else if (p.onGround) {
+          if (vx < tgt) vx = Math.min(tgt, vx + acc);
+          else vx = Math.max(tgt, vx - acc);
+        } else if (p.onGround && !lie) {
           const f = C.FRICTION * dt * (onIce ? C.ICE_FRICTION_MUL : 1);
           vx = Math.abs(vx) <= f ? 0 : vx - Math.sign(vx) * f;
         }
@@ -1002,7 +1202,7 @@
       // saut (double saut autorisé) + tolérance "coyote" + saut mural
       p.coyote = p.onGround ? C.COYOTE_MS : Math.max(0, p.coyote - dtMs);
       if (p.onGround && vyPx >= 0) p.jumps = 0;
-      if (inp.jump) {
+      if (inp.jump && !limp) {   // aplati au sol : impossible de sauter
         inp.jump = false;
         if (p.onGround || p.coyote > 0 || onWall) {
           vy = -C.JUMP; p.jumps = 1; p.coyote = 0;
@@ -1017,25 +1217,38 @@
       // d'où le chancellement chewing-gum
       // tous les dosages du "feel" viennent de C.TUNE (réglables en direct, touche T)
       const T = C.TUNE;
-      const lean = clamp(vxPx / C.MOVE, -1, 1) * T.LEAN;
-      const k = p.stagger > 0 ? 2 : (p.onGround ? T.K_SOL : T.K_AIR);
-      const d = p.stagger > 0 ? 0.3 : T.AMORTI;
+      const run = Math.min(1, Math.abs(vxPx) / C.MOVE);
+      // cible d'équilibre : à plat au sol quand on est couché ou écrasé
+      // (torse ≈ horizontal), sinon vertical penché dans le sens de la course
+      const lean = lie ? p.facing * 1.45 : clamp(vxPx / C.MOVE, -1, 1) * T.LEAN;
+      // écrasé/couché : on plaque franchement le torse à l'horizontale (il
+      // s'affale au sol sous le bloc) ; sinon équilibre debout normal
+      const k = lie ? 24 : (p.stagger > 0 ? 2 : (p.onGround ? T.K_SOL : T.K_AIR));
+      const d = lie ? (limp ? 0.9 : 1.1) : (p.stagger > 0 ? 0.3 : T.AMORTI);
       torso.applyTorque(-(torso.getAngle() - lean) * k - torso.getAngularVelocity() * d);
 
-      // couples max ré-appliqués chaque tick pour suivre les réglages en direct
-      r.hips[0].setMaxMotorTorque(T.T_JAMBES);
-      r.hips[1].setMaxMotorTorque(T.T_JAMBES);
-      r.shoulders[0].setMaxMotorTorque(T.T_BRAS);
-      r.shoulders[1].setMaxMotorTorque(T.T_BRAS2);
-      r.neck.setMaxMotorTorque(T.T_COU);
+      // couples max ré-appliqués chaque tick ; réduits quasi à néant quand on
+      // est couché/écrasé pour que les membres pendent mollement au sol
+      const jm = lie ? 0.15 : 1;
+      r.hips[0].setMaxMotorTorque(T.T_JAMBES * jm);
+      r.hips[1].setMaxMotorTorque(T.T_JAMBES * jm);
+      r.shoulders[0].setMaxMotorTorque(T.T_BRAS * jm);
+      r.shoulders[1].setMaxMotorTorque(T.T_BRAS2 * jm);
+      r.neck.setMaxMotorTorque(T.T_COU * jm);
 
-      // démarche : les hanches suivent une sinusoïde ; jambes repliées en l'air
-      const run = Math.min(1, Math.abs(vxPx) / C.MOVE);
-      if (p.onGround) p.phase += Math.abs(vxPx) * dt * 0.05;
+      // démarche : les hanches suivent une sinusoïde ; jambes repliées en l'air.
+      // la phase avance TOUJOURS (même à l'arrêt) pour animer le dodelinement
+      p.phase += (3.5 + Math.abs(vxPx) * 0.05) * dt;
       const swing = Math.sin(p.phase) * T.FOULEE * run;
-      this._servo(r.hips[0], p.onGround ? swing : 0.55, T.G_JAMBES);
-      this._servo(r.hips[1], p.onGround ? -swing : -0.3, T.G_JAMBES);
-      this._servo(r.neck, 0, T.G_COU);
+      // jambes franchement écartées au repos : plus un « I », plutôt un pantin
+      // avachi sur ses deux appuis ; l'écart se résorbe quand on court. Un léger
+      // ballant asymétrique donne l'allure molle
+      const stance = 0.5 * (1 - run);
+      const bob = Math.sin(p.phase * 0.5) * 0.12 * (1 - run);
+      this._servo(r.hips[0], p.onGround ? swing + stance + bob : 0.55, T.G_JAMBES);
+      this._servo(r.hips[1], p.onGround ? -swing - stance + bob : -0.3, T.G_JAMBES);
+      // la tête dodeline nettement (repère la mollesse, façon Stick Fight)
+      this._servo(r.neck, Math.sin(p.phase * 0.5) * 0.18, T.G_COU);
 
       // lancer de l'arme tenue : elle part en tournoyant vers la visée
       if (inp.throw) {
@@ -1084,8 +1297,9 @@
       // consigne du joint : angle monde voulu, moins l'angle du torse, moins
       // la référence π/2 (le bras est créé pendant vers le bas)
       this._servo(r.shoulders[0], p.aim + rel - torso.getAngle() - Math.PI / 2, T.G_BRAS);
-      // bras arrière : balance en course, tenu sinon
-      this._servo(r.shoulders[1], -Math.sin(p.phase) * 0.8 * run, 8);
+      // bras arrière : balance en course, pendouille et ballotte au repos
+      this._servo(r.shoulders[1],
+        -Math.sin(p.phase) * 0.8 * run + (0.25 + Math.sin(p.phase * 0.5) * 0.3) * (1 - run), 8);
       // coup de pied : la jambe avant part violemment vers la visée
       if (kicking) {
         r.hips[0].setMaxMotorTorque(T.T_JAMBES * 2.5);
@@ -1217,6 +1431,35 @@
         b.r, r2(b.t / C.EXPL_FX_MS)]);
     }
 
+    viewIceChunks() {
+      return this.iceChunks.map((c) => {
+        const q = c.body.getPosition();
+        const flat = [];
+        for (const v of c.verts) { flat.push(v[0], v[1]); }
+        return [Math.round(q.x * S), Math.round(q.y * S),
+          r2(c.body.getAngle()), flat];
+      });
+    }
+
+    // plateformes : [x,y,w,h, solid, présente, tremble, glace,
+    //                nbTuiles, masqueTuilesVivantes] — les deux derniers
+    //                champs pilotent le rendu fragmenté de la glace
+    viewPlats() {
+      return this.plats.map((q) => {
+        // masque des tuiles vivantes en chaîne '0'/'1' (robuste même pour les
+        // plateformes très larges) + largeurs des tuiles (elles sont variables)
+        let tc = 0, alive = '', widths = 0;
+        if (q.ice && q.tiles) {
+          tc = q.tiles.length;
+          alive = q.tiles.map((t) => (t.alive ? '1' : '0')).join('');
+          widths = q.tiles.map((t) => Math.round(t.tw));
+        }
+        return [q.x | 0, q.y | 0, q.w | 0, q.h, q.solid ? 1 : 0,
+          q.off ? 0 : 1, q.timer > 0 && !q.off ? 1 : 0,
+          q.ice ? 1 : 0, tc, alive, widths];
+      });
+    }
+
     snapshot() {
       return {
         t: 'state',
@@ -1249,9 +1492,8 @@
           return [Math.round(q.x * S), Math.round(q.y * S),
             r2(c.body.getAngle()), c.s];
         }),
-        plats: this.plats.map((q) => [q.x | 0, q.y | 0, q.w | 0, q.h, q.solid ? 1 : 0,
-          q.off ? 0 : 1, q.timer > 0 && !q.off ? 1 : 0,
-          q.ice ? (q.iceHp < C.ICE_HP * 0.55 ? 2 : 1) : 0]),
+        ik: this.viewIceChunks(),
+        plats: this.viewPlats(),
         round: {
           n: this.round.n, ph: this.round.phase,
           tm: Math.max(0, Math.ceil(this.round.timer)), w: this.round.winner,

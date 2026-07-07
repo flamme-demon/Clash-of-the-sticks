@@ -29,7 +29,7 @@
   // donne la direction de visée (où le bâton frappe)
   const input = {
     left: false, right: false, jump: false, attack: false, throw: false,
-    block: false, attackHeld: false,
+    block: false, attackHeld: false, down: false,
     mouseX: window.innerWidth / 2, mouseY: window.innerHeight / 2,
   };
 
@@ -47,6 +47,7 @@
     left: ['arrowleft', 'q', 'a'],
     right: ['arrowright', 'd'],
     jump: ['arrowup', 'z', 'w', ' '],
+    down: ['arrowdown', 's'],
     attack: ['e', 'x', 'j', 'enter'],
     throw: ['f', 'c'],
   };
@@ -59,6 +60,7 @@
     const k = e.key.toLowerCase();
     if (KEYS.left.includes(k)) input.left = true;
     else if (KEYS.right.includes(k)) input.right = true;
+    else if (KEYS.down.includes(k)) { e.preventDefault(); input.down = true; }
     else if (KEYS.jump.includes(k)) { e.preventDefault(); if (!e.repeat) input.jump = true; }
     else if (KEYS.attack.includes(k)) {
       if (!e.repeat) input.attack = true;
@@ -70,6 +72,7 @@
     const k = e.key.toLowerCase();
     if (KEYS.left.includes(k)) input.left = false;
     else if (KEYS.right.includes(k)) input.right = false;
+    else if (KEYS.down.includes(k)) input.down = false;
     else if (KEYS.attack.includes(k)) input.attackHeld = false;
   });
   window.addEventListener('mousemove', (e) => {
@@ -86,7 +89,7 @@
   });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   window.addEventListener('blur', () => {
-    input.left = false; input.right = false;
+    input.left = false; input.right = false; input.down = false;
     input.block = false; input.attackHeld = false;
   });
 
@@ -280,9 +283,8 @@
           const q = c.body.getPosition();
           return [q.x * C.SCALE, q.y * C.SCALE, c.body.getAngle(), c.s];
         }),
-        plats: world.plats.map((pl) => [pl.x, pl.y, pl.w, pl.h, pl.solid ? 1 : 0,
-          pl.off ? 0 : 1, pl.timer > 0 && !pl.off ? 1 : 0,
-          pl.ice ? (pl.iceHp < C.ICE_HP * 0.55 ? 2 : 1) : 0]),
+        iceChunks: world.viewIceChunks(),
+        plats: world.viewPlats(),
         round: {
           n: world.round.n, ph: world.round.phase,
           tm: world.round.timer, w: world.round.winner,
@@ -324,7 +326,8 @@
   function applyLocalInput() {
     world.setInput(myId, {
       l: input.left, r: input.right, j: input.jump, a: input.attack,
-      ah: input.attackHeld, tr: input.throw, bl: input.block, m: computeAim(),
+      ah: input.attackHeld, tr: input.throw, bl: input.block, dn: input.down,
+      m: computeAim(),
     });
     input.jump = false; input.attack = false; input.throw = false;
   }
@@ -333,7 +336,7 @@
     if (!clientNet) return;
     clientNet.sendInput({
       l: input.left, r: input.right, j: input.jump, a: input.attack,
-      ah: input.attackHeld, tr: input.throw, bl: input.block,
+      ah: input.attackHeld, tr: input.throw, bl: input.block, dn: input.down,
       m: Math.round(computeAim() * 100) / 100,
     });
     input.jump = false; input.attack = false; input.throw = false;
@@ -384,6 +387,7 @@
       lasers: snap.ls,
       swings: snap.sw,
       crates: snap.cr,
+      iceChunks: snap.ik,
       plats: snap.plats,
       round: snap.round,
       waiting: snap.players.length < 2,

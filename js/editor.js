@@ -5,27 +5,27 @@
 // (JSON + base64), sauvegarde dans le navigateur (localStorage).
 (function (global) {
   const C = global.CFG;
-  const SNAP = 10;                       // grille magnétique (px monde)
+  const SNAP = 10;                       // pas magnétique fin (px monde)
+  const GRID = 40;                       // maille de la grille (= 1 mètre physique)
   const LS_KEY = 'baton-maps';
 
   // outils : rect = tracé à la souris ; point = clic ; line = deux clics
   const TOOLS = [
     { id: 'move', ic: '✋', nom: 'Déplacer / supprimer (clic droit)' },
-    { id: 'bloc', ic: '⬜', nom: 'Bloc', kind: 'rect' },
-    { id: 'ice', ic: '🧊', nom: 'Glace (glisse, casse sous les balles)', kind: 'rect' },
-    { id: 'blink', ic: '👻', nom: 'Bloc clignotant', kind: 'rect' },
-    { id: 'crumble', ic: '🍪', nom: 'Bloc friable (cède sous les pas)', kind: 'rect' },
+    { id: 'bloc', ic: '⬜', nom: 'Bloc — clic droit dessus pour choisir la matière', kind: 'rect' },
     { id: 'spikes', ic: '🔺', nom: 'Pics', kind: 'rect' },
     { id: 'ball', ic: '⛓️', nom: 'Boule piquante (clic = ancre)', kind: 'point' },
     { id: 'laser', ic: '🔴', nom: 'Laser (deux clics : début, fin)', kind: 'line' },
     { id: 'swing', ic: '🪵', nom: 'Balançoire (clic = ancre)', kind: 'point' },
     { id: 'crate', ic: '📦', nom: 'Caisse', kind: 'point' },
-    { id: 'spawn', ic: '🚩', nom: 'Point d\'apparition', kind: 'point' },
+    { id: 'weapon', ic: '🔫', nom: 'Arme au sol — clic droit dessus pour choisir laquelle', kind: 'point' },
+    { id: 'spawn', ic: '🚩', nom: 'Apparition — clic droit pour l\'arme de départ', kind: 'point' },
   ];
 
   const E = {
     active: false,
     testing: false,    // mode essai : la partie tourne, l'édition est en pause
+    grid: false,       // grille d'aide à l'alignement
     def: null,
     world: null,
     renderer: null,
@@ -35,18 +35,30 @@
     lineStart: null,   // premier clic d'un laser
     moving: null,      // {obj, list, dx, dy} objet en cours de déplacement
     panel: null,
+    menu: null,        // menu contextuel de matière d'un bloc
     onExit: null,
   };
 
-  function snap(v) { return Math.round(v / SNAP) * SNAP; }
+  // avec la grille visible, on aimante à la maille (placement bien carré) ;
+  // sinon pas fin de 10 px
+  function snap(v) {
+    const g = E.grid ? GRID : SNAP;
+    return Math.round(v / g) * g;
+  }
+
+  // libellé d'une arme ('' ou absent = bâton, 'poings' = mains nues, sinon clé)
+  function weaponLabel(wk) {
+    if (wk === 'poings') return 'Poings';
+    return (C.WEAPONS[wk] && C.WEAPONS[wk].nom) || 'Bâton';
+  }
 
   function emptyDef() {
     const { W, H } = C.WORLD;
     return {
-      v: 1, theme: 0,
+      v: 1, theme: 0, drops: true,
       plats: [{ x: W / 2 - 400, y: H - 130, w: 800, h: 52 }],
       spikes: [], lava: null, balls: [], lasers: [], swings: [], crates: [],
-      spawns: [],
+      weapons: [], spawns: [],
     };
   }
 
@@ -54,7 +66,8 @@
   // aléatoire qu'on aime bien
   function captureDef(world) {
     return {
-      v: 1, theme: world.theme,
+      v: 1, theme: world.theme, drops: world.mapDrops !== false,
+      weapons: [],
       plats: world.plats.map((q) => ({
         x: q.x, y: q.y, w: q.w, h: q.h,
         mode: q.mode || undefined, ice: q.ice || undefined,
@@ -91,15 +104,96 @@
   }
 
   // ---------- interactions souris ----------
+  // position monde aimantée ET bornée à l'arène : on ne pose plus rien dehors
   function worldPos(e) {
     const w = E.renderer.worldFromScreen(e.clientX, e.clientY);
-    return { x: snap(w.x), y: snap(w.y) };
+    return {
+      x: Math.max(0, Math.min(C.WORLD.W, snap(w.x))),
+      y: Math.max(0, Math.min(C.WORLD.H, snap(w.y))),
+    };
+  }
+
+  // ---------- menu contextuel (clic droit) ----------
+  // matière d'un bloc, arme au sol, ou arme de départ d'un spawn — même
+  // pattern : on pose un objet générique, on choisit ensuite au clic droit
+  const MATERIALS = [
+    ['solid', '⬜ Dur'],
+    ['ice', '🧊 Glissant'],
+    ['blink', '👻 Clignotant'],
+    ['crumble', '🍪 Friable'],
+  ];
+  function setPlatMaterial(q, mat) {
+    q.mode = undefined; q.ice = undefined;
+    if (mat === 'ice') q.ice = 1;
+    else if (mat === 'blink') q.mode = 'blink';
+    else if (mat === 'crumble') q.mode = 'crumble';
+    // 'solid' : les deux restent absents
+  }
+  function del(list, obj) { const i = list.indexOf(obj); if (i >= 0) list.splice(i, 1); }
+
+  // items = [{ label, sel:bool, fn }] ; une entrée « Supprimer » est ajoutée
+  function menuItems(hit) {
+    const o = hit.obj, items = [];
+    if (hit.list === E.def.plats) {
+      const cur = o.ice ? 'ice' : (o.mode || 'solid');
+      for (const [k, l] of MATERIALS) {
+        items.push({ label: l, sel: k === cur, fn: () => setPlatMaterial(o, k) });
+      }
+    } else if (hit.list === E.def.weapons) {
+      for (const k of Object.keys(C.WEAPONS)) {
+        items.push({ label: C.WEAPONS[k].nom, sel: k === o.type, fn: () => { o.type = k; } });
+      }
+    } else if (hit.list === E.def.spawns) {
+      const opts = [['', 'Bâton (défaut)'], ['poings', 'Poings']];
+      for (const k of Object.keys(C.WEAPONS)) if (k !== 'baton') opts.push([k, C.WEAPONS[k].nom]);
+      for (const [v, l] of opts) {
+        items.push({ label: l, sel: (o.weapon || '') === v, fn: () => { o.weapon = v || undefined; } });
+      }
+    }
+    items.push({ label: '🗑️ Supprimer', del: true, fn: () => del(hit.list, o) });
+    return items;
+  }
+
+  function closeMenu() {
+    if (!E.menu) return;
+    E.menu.remove(); E.menu = null;
+    window.removeEventListener('mousedown', outsideClose, true);
+  }
+  function outsideClose(ev) {
+    if (E.menu && !E.menu.contains(ev.target)) closeMenu();
+  }
+  // le clic droit sert de menu à l'éditeur : on coupe le menu natif du
+  // navigateur tant qu'on édite (sinon les deux s'affichent superposés)
+  function blockContext(ev) { if (E.active) ev.preventDefault(); }
+  function openMenu(clientX, clientY, hit) {
+    closeMenu();
+    const m = document.createElement('div');
+    m.id = 'edCtx';
+    for (const it of menuItems(hit)) {
+      const btn = document.createElement('button');
+      btn.textContent = (it.sel ? '● ' : '') + it.label;
+      if (it.del) btn.className = 'del';
+      btn.addEventListener('click', () => { it.fn(); apply(); closeMenu(); });
+      m.appendChild(btn);
+    }
+    document.body.appendChild(m);
+    // repositionne pour que le menu reste toujours entièrement dans la fenêtre
+    const r = m.getBoundingClientRect();
+    const M = 8;
+    let left = clientX, top = clientY;
+    if (left + r.width > window.innerWidth - M) left = window.innerWidth - r.width - M;
+    if (top + r.height > window.innerHeight - M) top = window.innerHeight - r.height - M;
+    m.style.left = Math.max(M, left) + 'px';
+    m.style.top = Math.max(M, top) + 'px';
+    E.menu = m;
+    window.addEventListener('mousedown', outsideClose, true);
   }
 
   // recherche de l'objet le plus proche (pour déplacer / supprimer)
   function hitTest(x, y) {
     const d = E.def;
     const near = (px, py, r) => Math.hypot(px - x, py - y) < r;
+    for (const wp of d.weapons || []) if (near(wp.x, wp.y, 28)) return { obj: wp, list: d.weapons, px: 'x', py: 'y' };
     for (const c of d.crates) if (near(c.x, c.y, 34)) return { obj: c, list: d.crates, px: 'x', py: 'y' };
     for (const b of d.balls) {
       if (near(b.ax, b.ay, 30)) return { obj: b, list: d.balls, px: 'ax', py: 'ay' };
@@ -128,13 +222,20 @@
   function onDown(e) {
     if (!E.active || E.testing) return;
     e.preventDefault();
+    closeMenu();
     const { x, y } = worldPos(e);
     const t = TOOLS.find((t2) => t2.id === E.tool);
 
-    if (e.button === 2 || E.tool === 'erase') {   // clic droit : supprimer
+    if (e.button === 2) {   // clic droit
       const hit = hitTest(x, y);
-      if (hit) {
-        hit.list.splice(hit.list.indexOf(hit.obj), 1);
+      if (!hit) return;
+      // blocs, armes au sol et spawns ont un menu (matière / arme / arme de
+      // départ + supprimer) ; les autres objets se suppriment directement
+      if (hit.list === E.def.plats || hit.list === E.def.weapons ||
+          hit.list === E.def.spawns) {
+        openMenu(e.clientX, e.clientY, hit);
+      } else {
+        del(hit.list, hit.obj);
         apply();
       }
       return;
@@ -167,6 +268,9 @@
     if (E.tool === 'ball') E.def.balls.push({ ax: x, ay: y, L: 260, amp: 0.8 });
     else if (E.tool === 'swing') E.def.swings.push({ ax: x, ay: y, L: 280, amp: 0.45, w: 150 });
     else if (E.tool === 'crate') E.def.crates.push({ x, y });
+    // arme au sol (pistolet par défaut) et spawn (bâton par défaut) : on pose
+    // un item générique, on choisit ensuite au clic droit
+    else if (E.tool === 'weapon') (E.def.weapons || (E.def.weapons = [])).push({ x, y, type: 'pistolet' });
     else if (E.tool === 'spawn') E.def.spawns.push({ x, y });
     apply();
   }
@@ -195,14 +299,9 @@
     const x = Math.min(d.x0, d.x1), y = Math.min(d.y0, d.y1);
     const w = Math.abs(d.x1 - d.x0), h = Math.abs(d.y1 - d.y0);
     if (w < 30) return;   // tracé raté
+    // bloc « dur » par défaut ; clic droit dessus pour changer la matière
     if (E.tool === 'spikes') E.def.spikes.push({ x, y, w });
-    else {
-      const q = { x, y, w, h: Math.max(30, h) };
-      if (E.tool === 'ice') q.ice = 1;
-      else if (E.tool === 'blink') q.mode = 'blink';
-      else if (E.tool === 'crumble') q.mode = 'crumble';
-      E.def.plats.push(q);
-    }
+    else E.def.plats.push({ x, y, w, h: Math.max(30, h) });
     apply();
   }
 
@@ -213,13 +312,29 @@
     ctx.save();
     ctx.translate(ox, oy);
     ctx.scale(scale, scale);
+    // grille d'aide à l'alignement
+    if (E.grid) {
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let gx = 0; gx <= C.WORLD.W; gx += GRID) { ctx.moveTo(gx, 0); ctx.lineTo(gx, C.WORLD.H); }
+      for (let gy = 0; gy <= C.WORLD.H; gy += GRID) { ctx.moveTo(0, gy); ctx.lineTo(C.WORLD.W, gy); }
+      ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+      ctx.stroke();
+      // lignes fortes tous les 5 carreaux
+      ctx.beginPath();
+      for (let gx = 0; gx <= C.WORLD.W; gx += GRID * 5) { ctx.moveTo(gx, 0); ctx.lineTo(gx, C.WORLD.H); }
+      for (let gy = 0; gy <= C.WORLD.H; gy += GRID * 5) { ctx.moveTo(0, gy); ctx.lineTo(C.WORLD.W, gy); }
+      ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+      ctx.stroke();
+    }
     // bord de l'arène
     ctx.strokeStyle = 'rgba(255,255,255,0.25)';
     ctx.lineWidth = 2;
     ctx.setLineDash([12, 10]);
     ctx.strokeRect(0, 0, C.WORLD.W, C.WORLD.H);
     ctx.setLineDash([]);
-    // spawns
+    // spawns (avec l'arme de départ affichée au-dessus)
+    ctx.textAlign = 'center';
     for (const s of E.def.spawns) {
       ctx.fillStyle = 'rgba(110,231,160,0.9)';
       ctx.beginPath();
@@ -231,7 +346,13 @@
       ctx.strokeStyle = 'rgba(110,231,160,0.9)';
       ctx.lineWidth = 3;
       ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(s.x, s.y - 46); ctx.stroke();
+      if (s.weapon) {
+        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+        ctx.font = '13px system-ui, sans-serif';
+        ctx.fillText(weaponLabel(s.weapon), s.x, s.y - 52);
+      }
     }
+    ctx.textAlign = 'left';
     // tracé de rectangle en cours
     if (E.drag) {
       const x = Math.min(E.drag.x0, E.drag.x1), y = Math.min(E.drag.y0, E.drag.y1);
@@ -261,6 +382,9 @@
       '<button id="edTheme">Thème</button>' +
       '<button id="edLava">Lave : non</button>' +
       '</div><div class="row">' +
+      '<button id="edDrops">Largages : oui</button>' +
+      '<button id="edGrid">Grille : non</button>' +
+      '</div><div class="row">' +
       '<button id="edExport">Exporter</button>' +
       '<button id="edImport">Importer</button>' +
       '</div><div class="row">' +
@@ -288,6 +412,7 @@
       if (b.dataset.t) {
         E.tool = b.dataset.t;
         E.lineStart = null;
+        closeMenu();
         for (const el of p.querySelectorAll('.tool')) el.classList.toggle('sel', el === b);
         return;
       }
@@ -299,6 +424,7 @@
           E.panel.classList.toggle('testing', E.testing);
           b.textContent = E.testing ? '⏹ Reprendre l\'édition' : '▶ Tester la map';
           E.drag = null; E.lineStart = null; E.moving = null;
+          closeMenu();
           if (E.testing) { apply(); E.world.startRound(); }
           break;
         case 'edTheme':
@@ -315,6 +441,16 @@
           apply();
           break;
         }
+        case 'edDrops':
+          // les armes tombent-elles du ciel en cours de manche ?
+          E.def.drops = (E.def.drops === false);
+          b.textContent = 'Largages : ' + (E.def.drops === false ? 'non' : 'oui');
+          apply();
+          break;
+        case 'edGrid':
+          E.grid = !E.grid;
+          b.textContent = 'Grille : ' + (E.grid ? 'oui' : 'non');
+          break;
         case 'edExport':
           navigator.clipboard.writeText(encode(E.def));
           msg('Code de la map copié — collez-le à un copain !');
@@ -361,11 +497,13 @@
     if (E.active) {
       E.active = false;
       E.testing = false;
+      closeMenu();
       E.panel.remove(); E.panel = null;
       E.drag = null; E.lineStart = null; E.moving = null;
       canvas.removeEventListener('mousedown', onDown, true);
       window.removeEventListener('mousemove', onMove, true);
       window.removeEventListener('mouseup', onUp, true);
+      window.removeEventListener('contextmenu', blockContext, true);
       if (E.onExit) E.onExit();
       return;
     }
@@ -382,11 +520,15 @@
     E.panel.querySelector('[data-t="move"]').classList.add('sel');
     E.panel.querySelector('#edLava').textContent =
       'Lave : ' + (!E.def.lava ? 'non' : (E.def.lava.rise ? 'montante' : 'oui'));
+    E.panel.querySelector('#edDrops').textContent =
+      'Largages : ' + (E.def.drops === false ? 'non' : 'oui');
+    E.panel.querySelector('#edGrid').textContent = 'Grille : ' + (E.grid ? 'oui' : 'non');
     apply();
     // capture=true : l'éditeur passe avant les contrôles du jeu
     canvas.addEventListener('mousedown', onDown, true);
     window.addEventListener('mousemove', onMove, true);
     window.addEventListener('mouseup', onUp, true);
+    window.addEventListener('contextmenu', blockContext, true);
   }
 
   global.Editor = {

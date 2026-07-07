@@ -40,6 +40,7 @@
       drawSpikes(view.hazards);
       drawSwings(view.swings, theme);
       drawCrates(view.crates);
+      drawIceChunks(view.iceChunks);
       drawLasers(view.lasers);
       drawBalls(view.balls);
 
@@ -89,9 +90,61 @@
 
     function drawPlats(plats, theme) {
       for (const pl of plats) {
-        const [x0, y, w, h, , on, shake, ice] = pl;
-        // bloc disparu (clignotant éteint, effondré ou glace brisée) :
-        // simple fantôme en pointillés
+        const [x0, y, w, h, , on, shake, ice, tc, alive, widths] = pl;
+        // glace fragmentée : on regroupe les tuiles contiguës encore présentes
+        // en segments arrondis (pas de coutures internes) ; les tuiles
+        // détachées laissent un vrai trou aux bords arrondis. Les tuiles ont
+        // des largeurs variables (widths) => on calcule leurs bords réels
+        if (ice && tc > 0) {
+          const lefts = [];
+          let acc = x0;
+          for (let t = 0; t < tc; t++) { lefts.push(acc); acc += (widths && widths[t]) || (w / tc); }
+          let i = 0;
+          while (i < tc) {
+            if (alive[i] !== '1') { i++; continue; }
+            let j = i;
+            while (j < tc && alive[j] === '1') j++;
+            const rx = lefts[i], R = (j < tc ? lefts[j] : x0 + w);
+            const lBreak = i > 0;      // une tuile cassée à gauche => bord biseauté
+            const rBreak = j < tc;     // ... à droite
+            // rognage du coin supérieur côté cassure (aspect esquille anguleuse)
+            const cL = lBreak ? 8 + jag01(rx * 1.3) * 14 : 0;
+            const cR = rBreak ? 8 + jag01(R * 1.3) * 14 : 0;
+            ctx.fillStyle = '#93aab0';
+            if (!lBreak && !rBreak) {
+              // segment intact : joli rectangle arrondi
+              roundRect(rx, y, R - rx, h, 6);
+              ctx.fill();
+            } else {
+              // segment cassé : coins hauts rognés + flancs en biseau anguleux
+              // (déterministe via jagOff/jag01 => aucun scintillement)
+              ctx.beginPath();
+              ctx.moveTo(rx + cL, y);
+              ctx.lineTo(R - cR, y);
+              if (rBreak) {
+                ctx.lineTo(R + jagOff(R + 1), y + h * 0.5);
+                ctx.lineTo(R - cR * 0.4, y + h);
+              } else { ctx.lineTo(R, y + h); }
+              if (lBreak) {
+                ctx.lineTo(rx + cL * 0.4, y + h);
+                ctx.lineTo(rx + jagOff(rx + 1), y + h * 0.5);
+              } else { ctx.lineTo(rx, y + h); }
+              ctx.closePath();
+              ctx.fill();
+            }
+            // couche de neige bosselée sur le dessus (s'arrête au coin rogné)
+            ctx.fillStyle = '#eef5f6';
+            ctx.beginPath();
+            for (let bx = rx + Math.max(6, cL); bx <= R - Math.max(4, cR); bx += 9) {
+              ctx.moveTo(bx + 7, y + 1);
+              ctx.arc(bx, y + 1, 7, 0, Math.PI * 2);
+            }
+            ctx.fill();
+            i = j;
+          }
+          continue;
+        }
+        // bloc disparu (clignotant éteint ou effondré) : fantôme en pointillés
         if (on === 0) {
           ctx.globalAlpha = 0.10;
           ctx.strokeStyle = '#ffffff';
@@ -103,30 +156,12 @@
         }
         // bloc friable en train de céder : il tremble
         const x = shake ? x0 + (Math.random() - 0.5) * 7 : x0;
-        if (ice) {
-          ctx.fillStyle = 'rgba(160,215,240,0.75)';
-          roundRect(x, y, w, h, 8);
-          ctx.fill();
-          ctx.fillStyle = 'rgba(230,248,255,0.9)';
-          roundRect(x, y, w, 6, 3);
-          ctx.fill();
-          if (ice === 2) {   // fissures : la glace a bien morflé
-            ctx.strokeStyle = 'rgba(30,80,110,0.6)';
-            ctx.lineWidth = 2;
-            for (let i = 1; i <= 3; i++) {
-              const fx = x + (w * i) / 4;
-              line(fx, y + 3, fx - 14, y + h * 0.5);
-              line(fx - 14, y + h * 0.5, fx + 6, y + h - 4);
-            }
-          }
-        } else {
-          ctx.fillStyle = theme.plat;
-          roundRect(x, y, w, h, 8);
-          ctx.fill();
-          ctx.fillStyle = theme.top;
-          roundRect(x, y, w, 6, 3);
-          ctx.fill();
-        }
+        ctx.fillStyle = theme.plat;
+        roundRect(x, y, w, h, 8);
+        ctx.fill();
+        ctx.fillStyle = theme.top;
+        roundRect(x, y, w, 6, 3);
+        ctx.fill();
       }
     }
 
@@ -217,6 +252,45 @@
       }
     }
 
+    // morceaux de glace tombés de la plateforme : polygones irréguliers
+    function drawIceChunks(chunks) {
+      for (const c of chunks || []) {
+        const [x, y, ang, flat] = c;
+        if (!flat || flat.length < 6) continue;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(ang);
+        ctx.beginPath();
+        for (let i = 0; i < flat.length; i += 2) {
+          if (i === 0) ctx.moveTo(flat[i], flat[i + 1]);
+          else ctx.lineTo(flat[i], flat[i + 1]);
+        }
+        ctx.closePath();
+        // même matière que la plateforme : gris-bleu mat
+        ctx.fillStyle = '#93aab0';
+        ctx.fill();
+        // reste de neige givrée au centre (polygone réduit)
+        ctx.beginPath();
+        for (let i = 0; i < flat.length; i += 2) {
+          const px = flat[i] * 0.5, py = flat[i + 1] * 0.5 - 2;
+          if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(238,245,246,0.55)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(60,90,105,0.5)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        for (let i = 0; i < flat.length; i += 2) {
+          if (i === 0) ctx.moveTo(flat[i], flat[i + 1]);
+          else ctx.lineTo(flat[i], flat[i + 1]);
+        }
+        ctx.closePath();
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
     // pics : rangée de triangles pointes en haut
     function drawSpikes(hazards) {
       for (const h of hazards || []) {
@@ -265,6 +339,17 @@
       ctx.closePath();
     }
 
+    // décalage pseudo-aléatoire mais DÉTERMINISTE (mêmes graines -> même
+    // valeur d'une image à l'autre) : sert aux bords de glace en dents de scie
+    function jagOff(seed) {
+      const s = Math.sin(seed * 127.1) * 43758.5453;
+      return ((s - Math.floor(s)) - 0.5) * 16;   // ~ -8..8 px
+    }
+    function jag01(seed) {           // idem, valeur 0..1
+      const s = Math.sin(seed * 78.233) * 12543.71;
+      return s - Math.floor(s);
+    }
+
     function drawStickman(p, isMe) {
       const b = p.b;
       if (!b) return;   // cadavre parti dans le vide
@@ -305,17 +390,6 @@
           }
         }
       };
-      // aura dorée pulsante : poing Kaméaméa chargé
-      if (p.k && !p.d) {
-        const pulse = 0.75 + 0.25 * Math.sin(performance.now() / 90);
-        ctx.beginPath();
-        ctx.arc(tx, ty - 5, 34 + pulse * 6, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255,209,102,0.14)';
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(255,209,102,' + (0.55 * pulse + 0.25) + ')';
-        ctx.lineWidth = 4;
-        ctx.stroke();
-      }
       // bulle de bouclier (clic droit maintenu)
       if (p.bl && !p.d) {
         ctx.beginPath();
@@ -336,6 +410,23 @@
       ctx.fillStyle = p.c;
       ctx.lineWidth = 5;
       pass(false);
+
+      // poing Kaméaméa chargé : la main d'attaque rougeoie en or (pulsée)
+      if (p.k && !p.d && !p.w) {
+        const pulse = 0.7 + 0.3 * Math.sin(performance.now() / 80);
+        ctx.save();
+        ctx.shadowColor = 'rgba(255,209,102,0.95)';
+        ctx.shadowBlur = 16 + pulse * 10;
+        ctx.fillStyle = '#ffd166';
+        ctx.beginPath();
+        ctx.arc(a1x, a1y, 6.5 + pulse * 2.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,247,196,0.95)';
+        ctx.beginPath();
+        ctx.arc(a1x, a1y, 3 + pulse, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
 
       // barre de vie + pseudo (pas sur les cadavres)
       if (!p.d) {

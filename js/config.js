@@ -34,26 +34,26 @@
       baton:    { nom: 'Bâton', melee: 1, dmg: 16, range: 82, throwDmg: 32 },
       epee:     { nom: 'Épée', melee: 1, dmg: 24, range: 95, throwDmg: 42 },
       lance:    { nom: 'Lance', melee: 1, dmg: 18, range: 150, throwDmg: 50 },
-      pistolet: { nom: 'Pistolet', dmg: 12, ammo: 10, rate: 280, speed: 1500, recul: 60 },
-      uzi:      { nom: 'Uzi', dmg: 6, ammo: 30, rate: 90, speed: 1400, spread: 0.12, recul: 40 },
-      pompe:    { nom: 'Pompe', dmg: 7, ammo: 6, rate: 700, speed: 1300, pellets: 5, spread: 0.22, recul: 420 },
-      sniper:   { nom: 'Sniper', dmg: 45, ammo: 3, rate: 1100, speed: 2600, recul: 220 },
+      pistolet: { nom: 'Pistolet', dmg: 12, ammo: 10, rate: 280, speed: 1500, recul: 170 },
+      uzi:      { nom: 'Uzi', dmg: 6, ammo: 30, rate: 90, speed: 1400, spread: 0.12, recul: 90 },
+      pompe:    { nom: 'Pompe', dmg: 7, ammo: 6, rate: 700, speed: 1300, pellets: 5, spread: 0.22, recul: 1500 },
+      sniper:   { nom: 'Sniper', dmg: 45, ammo: 3, rate: 1100, speed: 2600, recul: 850 },
       // fournée Stick Fight officielle
-      revolver: { nom: 'Revolver', dmg: 22, ammo: 6, rate: 520, speed: 1900, recul: 150 },
-      ak47:     { nom: 'AK-47', dmg: 9, ammo: 25, rate: 130, speed: 1600, spread: 0.06, recul: 55 },
-      minigun:  { nom: 'Minigun', dmg: 5, ammo: 100, rate: 55, speed: 1500, spread: 0.16, recul: 110 },
+      revolver: { nom: 'Revolver', dmg: 22, ammo: 6, rate: 520, speed: 1900, recul: 380 },
+      ak47:     { nom: 'AK-47', dmg: 9, ammo: 25, rate: 130, speed: 1600, spread: 0.06, recul: 120 },
+      minigun:  { nom: 'Minigun', dmg: 5, ammo: 100, rate: 55, speed: 1500, spread: 0.16, recul: 300 },
       sabre:    { nom: 'Sabre laser', melee: 1, dmg: 32, range: 105, throwDmg: 60 },
       // explosifs : grav = gravité du projectile (px/s²), expl = rayon (px)
-      grenades: { nom: 'Lance-grenades', dmg: 34, ammo: 4, rate: 800, speed: 950, grav: 1600, expl: 95, recul: 120 },
-      rpg:      { nom: 'RPG', dmg: 55, ammo: 1, rate: 1200, speed: 1100, expl: 130, recul: 280 },
+      grenades: { nom: 'Lance-grenades', dmg: 34, ammo: 4, rate: 800, speed: 950, grav: 1600, expl: 95, recul: 320 },
+      rpg:      { nom: 'RPG', dmg: 55, ammo: 1, rate: 1200, speed: 1100, expl: 130, recul: 1100 },
     },
     DROPS: ['epee', 'lance', 'pistolet', 'uzi', 'pompe', 'sniper',
       'revolver', 'ak47', 'minigun', 'sabre', 'grenades', 'rpg'],
     EXPL_KNOCK: 700,              // projection au centre d'une explosion (px/s)
     EXPL_FX_MS: 320,              // durée de l'effet visuel d'explosion
-    // Kaméaméa : 3/4 de tour de souris autour du perso (à mains nues)
-    // charge le poing ; le prochain coup envoie la victime droit vers le ciel
-    KAME_SPIN: Math.PI * 1.5,     // rotation cumulée à boucler pour charger
+    // Kaméaméa : 4 tours de souris autour du perso (à mains nues) chargent
+    // le poing ; le prochain coup envoie la victime droit vers le ciel
+    KAME_SPIN: Math.PI * 8,       // rotation cumulée à boucler pour charger (4 tours)
     KAME_IDLE_MS: 350,            // pause de souris qui casse la charge en cours
     KAME_MS: 4000,                // le poing chargé reste prêt pendant 4 s
     KAME_UP: 1750,                // envol vertical de la victime (px/s)
@@ -68,6 +68,8 @@
     SHIELD_DRAIN: 10,             // usure du bouclier levé (points/s)
     SHIELD_DELAY_MS: 2500,        // délai sans dégât avant régénération
     WALL_SLIDE_VY: 130,           // glissade lente collé à une paroi (px/s)
+    CRUSH_LIMP_MS: 950,           // durée d'affalement quand un bloc écrase
+                                  // (corps mou au sol, on gigote pour sortir)
     KNOCK: 470,                   // projection, dans la direction de visée
                                   // (augmente avec les dégâts subis, façon Smash)
     HIT_FLASH_MS: 140,
@@ -85,16 +87,15 @@
       { nom: 'Volcan', bg: ['#301414', '#140808'], plat: '#3a2626', top: '#6b3a2a' },
     ],
     // dangers des cartes : pics et lave (parfois montante)
-    SPIKE_DMG: 22,                // dégâts d'un contact avec des pics
-    HAZARD_CD_MS: 650,            // invulnérabilité aux pics après un contact
+    HAZARD_CD_MS: 650,            // délai anti-double-déclenchement des pièges
     LAVA_DPS: 45,                 // brûlure de la lave (PV/s)
     LAVA_KNOCK: 900,              // la lave recrache vers le haut (px/s)
     LAVA_RISE: 16,                // vitesse de montée de la lave (px/s)
     LAVA_CHANCE: 0.4,             // probabilité d'une carte avec lave
     SPIKE_CHANCE: 0.25,           // probabilité de pics par bloc
+                                  // (les pics tuent instantanément au contact)
     // objets dynamiques des cartes
-    BALL_DMG: 25,                 // boule piquante au bout de sa chaîne
-    BALL_KNOCK: 820,
+    BALL_KNOCK: 820,             // projection de la boule piquante (tue net)
     LASER_DMG: 30,                // rayon laser (clignote : on/off)
     LASER_ON_MS: 1400,
     LASER_OFF_MS: 900,
@@ -103,23 +104,31 @@
     BLINK_OFF_MS: 900,
     CRUMBLE_MS: 700,              // sols friables : délai avant l'effondrement
     ICE_CHANCE: 0.25,             // probabilité de blocs de glace par carte
-    ICE_HP: 55,                   // points de vie d'un bloc de glace (balles)
-    ICE_ACCEL_MUL: 0.22,          // accélération réduite sur la glace
-    ICE_FRICTION_MUL: 0.08,       // presque aucune friction : ça glisse !
+    ICE_ACCEL_MUL: 0.12,          // accélération très réduite sur la glace
+    ICE_FRICTION_MUL: 0.025,      // quasi aucune friction : patinoire !
+    // glace fragmentée : la plateforme est découpée en tuiles ; chaque tir
+    // détache la tuile touchée, qui tombe (le reste tient encore)
+    ICE_TILE: 64,                 // largeur d'une tuile de glace (px) : gros
+                                  // éclats anguleux façon jeu d'origine
+    ICE_CHUNK_MAX: 55,            // nombre max de morceaux qui tombent
+    ICE_FALL_MIN_VY: 240,         // vitesse de chute mini pour blesser (px/s)
+    ICE_FALL_DMG_MAX: 26,         // dégâts max d'un morceau qui tombe de haut
     // réglages du "feel" physique — modifiables en direct avec la touche T
     TUNE: {
       LEAN: 0.45,      // inclinaison du torse en course (rad)
-      K_SOL: 46,       // raideur du ressort d'équilibre au sol
-      K_AIR: 5,        // ... en l'air (faible = vrilles)
-      AMORTI: 1.4,     // amortissement de l'équilibre
+      K_SOL: 40,       // raideur du ressort d'équilibre au sol (stable, il marche)
+      K_AIR: 4,        // ... en l'air (faible = vrilles)
+      AMORTI: 1.2,     // amortissement de l'équilibre
       FOULEE: 1.8,     // amplitude de la démarche (rad)
-      G_JAMBES: 18,    // vivacité des jambes
-      G_BRAS: 22,      // vivacité du bras du bâton
-      G_COU: 10,       // tenue de la tête
-      T_JAMBES: 9,     // force max des hanches
-      T_BRAS: 12,      // force max de l'épaule (bâton)
-      T_BRAS2: 3,      // force max du bras arrière
-      T_COU: 4,        // force max du cou
+      G_JAMBES: 13,    // vivacité des jambes
+      G_BRAS: 20,      // vivacité du bras du bâton
+      G_COU: 7,        // tenue de la tête (basse = la tête dodeline)
+      // membres purement décoratifs : couples faibles => ils pendent, ballottent
+      // et flottent librement (aspect mou, sans faire basculer le torse)
+      T_JAMBES: 5,     // force max des hanches
+      T_BRAS: 8,       // force max de l'épaule (bâton)
+      T_BRAS2: 1.5,    // force max du bras arrière (pend mollement)
+      T_COU: 2.5,      // force max du cou
     },
   };
 
