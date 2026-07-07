@@ -8,6 +8,91 @@
     const ctx = canvas.getContext('2d');
     let scale = 1, ox = 0, oy = 0;
 
+    // poussières décoratives (dérapage / saut / atterrissage) : déduites du
+    // mouvement observé, purement côté client (rien côté simulation/réseau)
+    const particles = [];
+    const pstate = new Map();   // id -> {x,y,vx,vy,grounded,skidAcc}
+    const rand = (a, b) => a + Math.random() * (b - a);
+
+    function nearGround(x, footY, plats) {
+      for (const pl of plats || []) {
+        if (x > pl[0] - 6 && x < pl[0] + pl[2] + 6 &&
+            footY >= pl[1] - 10 && footY <= pl[1] + 16) return true;
+      }
+      return false;
+    }
+    function puff(x, y, vx, vy, r, life) {
+      particles.push({ k: 0, x, y, vx, vy, r, life, max: life });
+    }
+    function streak(x, y, vx, vy, life) {
+      particles.push({ k: 1, x, y, vx, vy, life, max: life });
+    }
+
+    function updateParticles(view, dt) {
+      if (dt <= 0 || dt > 0.1) dt = 0.016;
+      const seen = new Set();
+      for (const p of view.players || []) {
+        if (p.d || !p.b) continue;
+        seen.add(p.id);
+        const x = p.b[0];
+        const footY = Math.max(p.b[10], p.b[12]);   // pied le plus bas
+        let st = pstate.get(p.id);
+        if (!st) { st = { x, y: footY, vx: 0, vy: 0, grounded: true, skidAcc: 0 }; pstate.set(p.id, st); }
+        const vx = (x - st.x) / dt, vy = (footY - st.y) / dt;
+        const grounded = nearGround(x, footY, view.plats);
+        // saut : au sol l'instant d'avant, file vers le haut
+        if (st.grounded && vy < -320) {
+          for (let k = 0; k < 5; k++) {
+            streak(x + rand(-8, 8), footY - 2, rand(-80, 80), rand(20, 110), 0.28);
+          }
+        }
+        // atterrissage : en l'air, retombe au sol vite (vitesse de descente
+        // courante = celle du moment où le pied touche)
+        if (!st.grounded && grounded && vy > 260) {
+          puff(x, footY - 3, 0, -8, 6, 0.32);
+          for (let k = 0; k < 4; k++) {
+            streak(x + rand(-6, 6), footY - 2, rand(-140, 140), rand(-40, -90), 0.24);
+          }
+        }
+        // dérapage / course rapide au sol : nuage traînant derrière
+        if (grounded && Math.abs(vx) > 150) {
+          st.skidAcc += dt * (Math.abs(vx) / 190);
+          while (st.skidAcc > 0.035) {
+            st.skidAcc -= 0.035;
+            const dir = vx > 0 ? -1 : 1;   // la poussière traîne à l'arrière
+            puff(x + dir * 9 + rand(-4, 4), footY - 3 + rand(-3, 3),
+              dir * rand(10, 45), rand(-35, -5), rand(3, 6), rand(0.3, 0.5));
+          }
+        } else { st.skidAcc = 0; }
+        st.x = x; st.y = footY; st.vx = vx; st.vy = vy; st.grounded = grounded;
+      }
+      for (const id of [...pstate.keys()]) if (!seen.has(id)) pstate.delete(id);
+      // avance et estompe les particules
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const q = particles[i];
+        q.life -= dt;
+        if (q.life <= 0) { particles.splice(i, 1); continue; }
+        q.vy += 260 * dt;               // légère gravité
+        q.x += q.vx * dt; q.y += q.vy * dt;
+        if (q.k === 0) q.r += 13 * dt;  // le nuage gonfle
+      }
+    }
+
+    function drawParticles() {
+      for (const q of particles) {
+        const a = Math.max(0, q.life / q.max);
+        if (q.k === 0) {
+          ctx.fillStyle = 'rgba(240,244,250,' + (a * 0.5).toFixed(3) + ')';
+          ctx.beginPath(); ctx.arc(q.x, q.y, q.r, 0, Math.PI * 2); ctx.fill();
+        } else {
+          const sp = Math.hypot(q.vx, q.vy) || 1;
+          ctx.strokeStyle = 'rgba(240,244,250,' + (a * 0.85).toFixed(3) + ')';
+          ctx.lineWidth = 2;
+          line(q.x, q.y, q.x - (q.vx / sp) * 6, q.y - (q.vy / sp) * 6);
+        }
+      }
+    }
+
     function resize() {
       canvas.width = window.innerWidth * devicePixelRatio;
       canvas.height = window.innerHeight * devicePixelRatio;
@@ -75,6 +160,10 @@
         ctx.beginPath(); ctx.arc(x, y, r * 0.4 * q, 0, Math.PI * 2); ctx.fill();
         ctx.globalAlpha = 1;
       }
+
+      // poussières (dérapage / saut / atterrissage) sous les bonshommes
+      updateParticles(view, dt);
+      drawParticles();
 
       // les cadavres d'abord (sous les vivants), puis les vivants
       for (const p of view.players) if (p.d) drawStickman(p, p.id === myId);
