@@ -471,6 +471,12 @@
       ctx.textAlign = 'center';
       const r = view.round;
 
+      if (view.testing) {
+        ctx.fillStyle = 'rgba(255,255,255,0.65)';
+        ctx.font = Math.round(17 * devicePixelRatio) + 'px system-ui, sans-serif';
+        ctx.fillText('Essai de la map — « ⏹ Reprendre l\'édition » pour revenir au chantier',
+          cw / 2, ch * 0.07);
+      }
       if (view.waiting) {
         banner(cw, ch, 'En attente des copains…',
           'Partagez le lien d\'invitation (en haut à gauche) — la partie démarre à 2 joueurs.');

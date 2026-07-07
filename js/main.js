@@ -50,8 +50,12 @@
     attack: ['e', 'x', 'j', 'enter'],
     throw: ['f', 'c'],
   };
+  // l'éditeur bloque les contrôles du jeu, sauf pendant l'essai de la map
+  function editingNow() {
+    return window.Editor && Editor.active && !Editor.testing;
+  }
   window.addEventListener('keydown', (e) => {
-    if (!running || (window.Editor && Editor.active)) return;
+    if (!running || editingNow()) return;
     const k = e.key.toLowerCase();
     if (KEYS.left.includes(k)) input.left = true;
     else if (KEYS.right.includes(k)) input.right = true;
@@ -72,7 +76,7 @@
     input.mouseX = e.clientX; input.mouseY = e.clientY;
   });
   canvas.addEventListener('mousedown', (e) => {
-    if (!running || (window.Editor && Editor.active)) return;
+    if (!running || editingNow()) return;
     if (e.button === 2) input.block = true;   // clic droit maintenu : bouclier
     else { input.attack = true; input.attackHeld = true; }
   });
@@ -209,9 +213,9 @@
     if (dtMs <= 0) return;
     lastStep = now;
     if (mode === 'host') {
-      // en mode édition la partie est figée, mais on continue d'émettre :
-      // les invités voient la map se construire en direct
-      if (window.Editor && Editor.active) {
+      // en mode édition la partie est figée (sauf pendant « Tester »),
+      // mais on continue d'émettre : les invités voient la map évoluer
+      if (editingNow()) {
         accumulator = 0;
         if (hostNet) hostNet.broadcast();
         return;
@@ -283,8 +287,9 @@
           n: world.round.n, ph: world.round.phase,
           tm: world.round.timer, w: world.round.winner,
         },
-        // pas de bandeau d'attente pendant qu'on construit sa map
+        // pas de bandeau d'attente pendant qu'on construit ou essaie sa map
         waiting: world.players.size < 2 && !(window.Editor && Editor.active),
+        testing: window.Editor && Editor.active && Editor.testing,
       };
     } else {
       view = buildRemoteView(dt);

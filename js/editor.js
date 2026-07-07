@@ -25,6 +25,7 @@
 
   const E = {
     active: false,
+    testing: false,    // mode essai : la partie tourne, l'édition est en pause
     def: null,
     world: null,
     renderer: null,
@@ -125,7 +126,7 @@
   }
 
   function onDown(e) {
-    if (!E.active) return;
+    if (!E.active || E.testing) return;
     e.preventDefault();
     const { x, y } = worldPos(e);
     const t = TOOLS.find((t2) => t2.id === E.tool);
@@ -171,7 +172,7 @@
   }
 
   function onMove(e) {
-    if (!E.active) return;
+    if (!E.active || E.testing) return;
     const { x, y } = worldPos(e);
     if (E.drag) { E.drag.x1 = x; E.drag.y1 = y; }
     else if (E.moving) {
@@ -187,7 +188,7 @@
   }
 
   function onUp(e) {
-    if (!E.active) return;
+    if (!E.active || E.testing) return;
     if (E.moving) { E.moving = null; apply(); return; }
     if (!E.drag) return;
     const d = E.drag; E.drag = null;
@@ -207,7 +208,7 @@
 
   // ---------- superposition dessinée après le rendu normal ----------
   function drawOverlay() {
-    if (!E.active) return;
+    if (!E.active || E.testing) return;
     const { scale, ox, oy, ctx } = E.renderer.getTransform();
     ctx.save();
     ctx.translate(ox, oy);
@@ -254,7 +255,9 @@
     for (const t of TOOLS) {
       html += '<button class="tool" data-t="' + t.id + '" title="' + t.nom + '">' + t.ic + '</button>';
     }
-    html += '</div><div class="row">' +
+    html += '</div>' +
+      '<button id="edPlay" class="play">▶ Tester la map</button>' +
+      '<div class="row">' +
       '<button id="edTheme">Thème</button>' +
       '<button id="edLava">Lave : non</button>' +
       '</div><div class="row">' +
@@ -289,6 +292,15 @@
         return;
       }
       switch (b.id) {
+        case 'edPlay':
+          // essai de la map : la partie tourne, le panneau se réduit ;
+          // au retour on refige tout et on reprend l'édition
+          E.testing = !E.testing;
+          E.panel.classList.toggle('testing', E.testing);
+          b.textContent = E.testing ? '⏹ Reprendre l\'édition' : '▶ Tester la map';
+          E.drag = null; E.lineStart = null; E.moving = null;
+          if (E.testing) { apply(); E.world.startRound(); }
+          break;
         case 'edTheme':
           E.def.theme = (E.def.theme + 1) % C.THEMES.length;
           msg('Thème : ' + C.THEMES[E.def.theme].nom);
@@ -348,6 +360,7 @@
   function toggle(world, renderer, canvas, onExit) {
     if (E.active) {
       E.active = false;
+      E.testing = false;
       E.panel.remove(); E.panel = null;
       E.drag = null; E.lineStart = null; E.moving = null;
       canvas.removeEventListener('mousedown', onDown, true);
@@ -376,5 +389,9 @@
     window.addEventListener('mouseup', onUp, true);
   }
 
-  global.Editor = { toggle, drawOverlay, get active() { return E.active; } };
+  global.Editor = {
+    toggle, drawOverlay,
+    get active() { return E.active; },
+    get testing() { return E.testing; },
+  };
 })(window);

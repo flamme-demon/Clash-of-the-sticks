@@ -177,3 +177,11 @@ kbd {
 #editorPanel .row { display: flex; gap: 6px; margin-top: 6px; }
 #editorPanel .row button, #editorPanel .row select { flex: 1; padding: 6px 4px; font-size: 0.75rem; }
 #editorPanel #edMsg { color: #8b93a7; margin-top: 8px; min-height: 1.2em; }
+#editorPanel #edPlay {
+  width: 100%; margin-top: 4px; padding: 8px;
+  font-size: 0.85rem; font-weight: 700;
+}
+/* pendant l'essai, le panneau se réduit au seul bouton de retour */
+#editorPanel.testing .tools, #editorPanel.testing .row, #editorPanel.testing #edMsg {
+  display: none;
+}
